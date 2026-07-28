@@ -134,11 +134,12 @@ def comments_sanity():
         id_ = str(body.get('id') or '')
         if not id_:
             return jsonify({'error': 'Invalid comment id'}), 400
-        del_url = f"{base}/data/doc/{dataset}/{id_}"
-        r = requests.delete(del_url, headers=headers, timeout=10)
+        del_url = f"{base}/data/mutate/{dataset}?returnIds=true"
+        del_payload = {"mutations": [{"delete": {"id": id_}}]}
+        r = requests.post(del_url, headers=headers, json=del_payload, timeout=10)
         if r.status_code in (200, 204):
             return ('', 204)
-        return jsonify({'error': 'Delete failed'}), 500
+        return jsonify({'error': 'Delete failed', 'detail': r.text}), 500
 
 
 if __name__ == '__main__':
