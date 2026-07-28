@@ -1,11 +1,6 @@
 {
   "version": 2,
-  "builds": [
-    { "src": "api/*.py", "use": "@vercel/python" },
-    { "src": "app.py", "use": "@vercel/python" }
-  ],
-  "routes": [
-    { "src": "/api/comments", "dest": "/api/comments.py" },
-    { "src": "/(.*)", "dest": "/app.py" }
-  ]
+  "functions": {
+    "api/*.js": { "runtime": "nodejs18.x" }
+  }
 }

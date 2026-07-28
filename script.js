@@ -147,12 +147,20 @@ function playCelestialAudio(targetName) {
     activeCelestialAudio.currentTime = 0;
   }
 
-  activeCelestialAudio = new Audio(encodeURI(`./${fileName}`));
-  activeCelestialAudio.preload = 'auto';
-  activeCelestialAudio.volume = 0.72;
-  activeCelestialAudio.play().catch(() => {
-    // Playback can be blocked until the browser receives a user gesture.
-  });
+  try {
+    // Construct an absolute URL to avoid relative-path quirks and ensure
+    // proper percent-encoding for non-ASCII filenames.
+    const audioUrl = new URL(fileName, location.origin + '/').href;
+    activeCelestialAudio = new Audio(audioUrl);
+    activeCelestialAudio.preload = 'auto';
+    activeCelestialAudio.volume = 0.72;
+    activeCelestialAudio.crossOrigin = 'anonymous';
+    activeCelestialAudio.play().catch((err) => {
+      console.warn('Celestial audio playback blocked or failed:', audioUrl, err);
+    });
+  } catch (err) {
+    console.warn('Failed to create celestial audio for', fileName, err);
+  }
 }
 
 function stopCelestialAudio() {
