@@ -1,12 +1,15 @@
 import { createClient } from '@sanity/client';
 
-const client = createClient({
-  projectId: process.env.SANITY_PROJECT_ID,
-  dataset: process.env.SANITY_DATASET || 'production',
-  apiVersion: process.env.SANITY_API_VERSION || '2026-07-28',
-  useCdn: false,
-  token: process.env.SANITY_API_TOKEN
-});
+function getSanityClient() {
+  if (!process.env.SANITY_PROJECT_ID || !process.env.SANITY_API_TOKEN) return null;
+  return createClient({
+    projectId: process.env.SANITY_PROJECT_ID,
+    dataset: process.env.SANITY_DATASET || 'production',
+    apiVersion: process.env.SANITY_API_VERSION || '2026-07-28',
+    useCdn: false,
+    token: process.env.SANITY_API_TOKEN
+  });
+}
 
 function normaliseComment(input) {
   const name = String(input?.name || '').trim().slice(0, 24);
@@ -15,11 +18,15 @@ function normaliseComment(input) {
 }
 
 export default async function handler(request, response) {
-  if (!process.env.SANITY_PROJECT_ID || !process.env.SANITY_API_TOKEN) {
-    return response.status(503).json({ error: 'Sanity environment is not configured' });
-  }
-
   try {
+    const client = getSanityClient();
+    if (!client) {
+      return response.status(503).json({
+        error: 'Sanity environment is not configured',
+        required: ['SANITY_PROJECT_ID', 'SANITY_API_TOKEN']
+      });
+    }
+
     if (request.method === 'GET') {
       const comments = await client.fetch(
         '*[_type == "comment"] | order(createdAt asc)[0...100]{_id, name, text, createdAt}'
