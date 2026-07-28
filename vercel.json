@@ -1,9 +1,9 @@
 {
   "version": 2,
-  "functions": {
-    "api/comments.py": { "runtime": "python3.11", "memory": 1024, "maxDuration": 10 },
-    "app.py": { "runtime": "python3.11", "memory": 1024, "maxDuration": 10 }
-  },
+  "builds": [
+    { "src": "api/*.py", "use": "@vercel/python" },
+    { "src": "app.py", "use": "@vercel/python" }
+  ],
   "routes": [
     { "src": "/api/comments", "dest": "/api/comments.py" },
     { "src": "/(.*)", "dest": "/app.py" }
