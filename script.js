@@ -360,7 +360,7 @@ function createHollywoodBlackHole() {
   blackHoleGroup = new THREE.Group();
 
   // Relative GR-inspired scale: event horizon r_s, photon sphere 1.5 r_s.
-  const schwarzschildRadius = 6.0;
+  const schwarzschildRadius = 7.8;
 
   const coreGeo = new THREE.SphereGeometry(schwarzschildRadius, 64, 64);
   const coreMat = new THREE.MeshBasicMaterial({ color: 0x000000 });
