@@ -1,37 +1,7 @@
 // Initialize Lucide Icons
 lucide.createIcons();
 
-const initialComments = [
-  { name: "Minh Anh", text: "Giao diện hố đen & sao Pulsar Neutron 3D siêu thực! 💕" },
-  { name: "Hoàng Nam", text: "Sao Neutron xoay 1000 vòng/s phát chùm tia cực ảo!" },
-  { name: "Chuột Boss", text: "Chào mừng bạn đến với Chuột Chat 🚀" },
-  { name: "Thu Trang", text: "Viền hố đen trắng muốt rực rỡ từ mọi góc nhìn!" },
-  { name: "Đức Huy", text: "Viền hố đen tối giản thuần khiết cực sang!" },
-  { name: "Thanh Trúc", text: "Bấm nút nhảy qua app ngay thôi mng ơi." },
-  { name: "Quốc Bảo", text: "Các lời nhắn xoay elip siêu mượt!" },
-  { name: "Lan Phương", text: "360 Neutron Star Pulsar VFX!" },
-  { name: "Gia Hưng", text: "Cực kỳ ấn tượng và mãn nhãn." },
-  { name: "Hải Yến", text: "Tụ hình trái tim cưng ghê 💕" },
-  { name: "Tuấn Kiệt", text: "Vào chat cùng mọi người nào!" },
-  { name: "Bảo Ngọc", text: "100 điểm cho trải nghiệm góc nhìn 360 này." },
-  { name: "Đăng Khoa", text: "Giao diện siêu hiện đại mượt mà." },
-  { name: "Khánh Linh", text: "Vũ trụ xa xăm ngàn vì sao lấp lánh." },
-  { name: "Tấn Phát", text: "Quá ảo diệu, thiết kế siêu phẩm!" },
-  { name: "Ngọc Mai", text: "Bong bóng Messenger hồng tím nổi bật!" }
-];
-
-initialComments.splice(0, initialComments.length,
-  { name: 'Minh Anh', text: 'Chủ Tịch Chuột thật sự rất tài năng!' },
-  { name: 'Hoàng Nam', text: 'Chủ Tịch Chuột làm dự án quá ấn tượng.' },
-  { name: 'Thu Trang', text: 'Chúc Chủ Tịch Chuột luôn bứt phá nhé!' },
-  { name: 'Đức Huy', text: 'Phong cách của Chủ Tịch Chuột rất chuyên nghiệp.' },
-  { name: 'Thanh Trúc', text: 'Chủ Tịch Chuột có gu sáng tạo tuyệt vời.' },
-  { name: 'Quốc Bảo', text: 'Sản phẩm của Chủ Tịch Chuột quá mượt mà.' },
-  { name: 'Lan Phương', text: 'Chủ Tịch Chuột đúng là đỉnh của chóp!' },
-  { name: 'Gia Hưng', text: 'Khả năng thiết kế của Chủ Tịch Chuột rất nổi bật.' },
-  { name: 'Hải Yến', text: 'Ủng hộ Chủ Tịch Chuột hết mình!' },
-  { name: 'Tuấn Kiệt', text: 'Chủ Tịch Chuột làm mọi thứ rất chỉn chu.' }
-);
+const initialComments = [];
 
 const COMMENT_EDITOR_STORAGE_KEY = 'directchat-comment-samples';
 
