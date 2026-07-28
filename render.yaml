@@ -1,0 +1,19 @@
+services:
+  - type: web
+    runtime: node
+    name: chuot-chat
+    buildCommand: npm install
+    startCommand: node server.js
+    pullRequestPreviewsEnabled: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: chuot-chat-db
+          property: connectionString
+databases:
+  - name: chuot-chat-db
+    databaseName: chuot_chat
+    user: chuot_chat
+    plan: free

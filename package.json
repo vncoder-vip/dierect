@@ -1,0 +1,16 @@
+{
+  "name": "chuot-chat",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chuột Chat static experience with a Render Postgres comment API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "pg": "^8.16.3"
+  }
+}

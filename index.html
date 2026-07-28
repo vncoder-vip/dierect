@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chuột Chat - Nơi Trò Chuyện Tốc Độ & Siêu Nhẹ</title>
+  <meta name="description" content="Trang quảng cáo chính thức của Chuột Chat - Trải nghiệm trò chuyện mượt mà, riêng tư và hiện đại trong vũ trụ Hố Đen Hollywood." />
+  <!-- Google Fonts: Plus Jakarta Sans & Space Grotesk -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <!-- Three.js CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- WebGL Background Canvas -->
+  <div id="canvas-container"></div>
+
+  <!-- Floating Navigation Bar -->
+  <div class="navbar-container">
+    <nav class="navbar">
+      <a href="#" class="logo-brand">
+        <div class="logo-icon">
+          <i data-lucide="message-square"></i>
+        </div>
+        <span class="logo-title">Chuột Chat</span>
+      </a>
+
+      <ul class="nav-links">
+        <li><a href="#comments" class="nav-link">Vũ Trụ Hố Đen</a></li>
+        <li><a href="#features" class="nav-link">Tính Năng</a></li>
+        <li><a href="#comments" class="nav-link">Gửi Lời Chúc</a></li>
+      </ul>
+
+      <a href="https://chutichchuot.vercel.app" target="_blank" rel="noopener noreferrer" class="btn-launch">
+        <span>Vào Chat ngay</span>
+        <i data-lucide="arrow-up-right"></i>
+      </a>
+    </nav>
+  </div>
+
+  <!-- Main Content -->
+  <main>
+    <!-- Fullscreen Panoramic Space Viewport Section for Unobstructed Black Hole Viewing -->
+    <section class="hero-section" style="min-height: 100vh; padding: 0;">
+      <aside class="target-finder" aria-label="Chọn thiên thể để quan sát">
+        <div class="target-finder-header">
+          <div class="target-finder-icon" aria-hidden="true">
+            <i data-lucide="telescope"></i>
+          </div>
+          <div>
+            <span class="target-finder-kicker">Kính thiên văn</span>
+            <h1>Chọn thiên thể</h1>
+          </div>
+        </div>
+        <p class="target-finder-desc">Chọn một mục tiêu để camera tự động đưa bạn tới gần hơn.</p>
+        <label class="sr-only" for="celestial-target">Thiên thể muốn quan sát</label>
+        <div class="target-finder-controls">
+          <select id="celestial-target" class="target-select">
+            <option value="" selected disabled>Chọn thiên thể...</option>
+            <option value="blackhole">Hố Đen</option>
+            <option value="neutron">Sao Neutron</option>
+          </select>
+          <button type="button" id="focus-target" class="btn-focus-target">
+            <i data-lucide="crosshair"></i>
+            <span>Ngắm ngay</span>
+          </button>
+        </div>
+        <button type="button" id="free-orbit" class="btn-free-orbit">
+          <i data-lucide="rotate-ccw"></i>
+          <span>Trở về góc nhìn tự do</span>
+        </button>
+      </aside>
+    </section>
+
+    <!-- Features Showcase -->
+    <section id="features" class="features-section">
+      <h2 class="section-title">Tại sao chọn Chuột Chat?</h2>
+      <p class="section-desc">Được thiết kế tỉ mỉ để tôn vinh sự tinh tế và trải nghiệm thuần khiết nhất.</p>
+
+      <div class="grid-3">
+        <div class="feature-card">
+          <div class="feature-icon-box">
+            <i data-lucide="shield-check"></i>
+          </div>
+          <h3>Tối Giản & Anti-Slop</h3>
+          <p>Không quảng cáo phiền phức, không giao diện rác. Tất cả tập trung vào nội dung cuộc trò chuyện của bạn.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box">
+            <i data-lucide="zap"></i>
+          </div>
+          <h3>Tốc Độ Tức Thì</h3>
+          <p>Truyền tải tin nhắn thời gian thực với độ trễ gần như bằng không nhờ hạ tầng tối ưu trên Vercel Edge.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon-box">
+            <i data-lucide="lock"></i>
+          </div>
+          <h3>Riêng Tư Tuyệt Đối</h3>
+          <p>Dữ liệu hội thoại được mã hóa cao cấp, không lưu trữ vết chân số ngoài mục đích kết nối trực tiếp.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Interactive Comment Submission Panel Moved Down Below Features -->
+    <section id="comments" class="comment-panel-wrapper" style="margin-top: 60px;">
+      <div class="comment-card">
+        <div class="comment-header">
+          <div class="comment-title">
+            <i data-lucide="message-circle-plus"></i>
+            <span>Để lại lời nhắn của bạn</span>
+          </div>
+          <span class="comment-count-badge" id="comment-count">16 lời nhắn đang quay quanh Hố Đen</span>
+        </div>
+
+        <!-- Preview Messenger Bubble live -->
+        <div class="messenger-preview-box">
+          <span class="preview-label">Xem trước bóng bóng tin nhắn Messenger:</span>
+          <div class="msg-bubble-preview">
+            <div class="msg-bubble-avatar" id="avatar-preview">M</div>
+            <div class="msg-bubble-content">
+              <span class="msg-bubble-sender" id="name-preview">Minh Anh</span>
+              <p class="msg-bubble-text" id="text-preview">Chuột Chat đỉnh cao ghê! 🚀</p>
+            </div>
+          </div>
+        </div>
+
+        <form id="comment-form" onsubmit="handleCommentSubmit(event)">
+          <div class="form-group">
+            <input type="text" id="user-name" class="input-field" placeholder="Tên hoặc biệt danh của bạn..." required maxlength="24" oninput="updatePreview()">
+            <textarea id="user-msg" class="textarea-field" placeholder="Nhập cảm nghĩ về Chuột Chat (Lời nhắn sẽ hóa thành bong bóng Messenger hồng tím quay quanh Hố Đen)..." required maxlength="120" oninput="updatePreview()"></textarea>
+            <button type="submit" class="btn-submit-comment">
+              <span>Phóng Lời Nhắn</span>
+              <i data-lucide="send"></i>
+            </button>
+          </div>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <!-- Footer -->
+  <footer>
+    <div class="footer-line">
+      <p class="footer-secret-trigger" role="link" tabindex="0" aria-label="Mở trang ẩn của Chuột Chat">
+        © 2026 Chuột Chat. Deep Space Hollywood VFX & Three.js physics. Ghé thăm ứng dụng tại
+        <a href="https://chutichchuot.vercel.app" target="_blank" rel="noopener noreferrer" onclick="event.stopPropagation()">chutichchuot.vercel.app</a>
+      </p>
+      <a class="stealth-editor-link" href="skcode1234567890.html" aria-label="Mở trang quản trị bình luận"></a>
+    </div>
+  </footer>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">
+    <i data-lucide="sparkles" style="color: #f472b6;"></i>
+    <span id="toast-message">Bình luận của bạn đã đi vào quỹ đạo Hố Đen!</span>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

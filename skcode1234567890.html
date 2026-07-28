@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Quản trị bình luận</title>
+  <link rel="stylesheet" href="comment-editor.css" />
+</head>
+<body>
+  <main id="access-gate" class="access-gate" aria-labelledby="access-title">
+    <section class="access-card">
+      <p class="eyebrow">Khu vực riêng</p>
+      <h1 id="access-title">Mở trang chỉnh sửa</h1>
+      <p id="access-description" class="sub">Nhập mật khẩu để quản lý các bình luận trôi nổi.</p>
+      <form id="access-form" class="access-form">
+        <label for="access-password">Mật khẩu
+          <input id="access-password" type="password" autocomplete="current-password" minlength="4" required autofocus />
+        </label>
+        <button id="access-submit" class="save" type="submit">Mở trang chỉnh sửa</button>
+        <p id="access-status" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+
+  <main id="editor-app" class="shell" hidden>
+    <section class="hero" aria-labelledby="page-title">
+      <div>
+        <p class="eyebrow">Trang quản trị riêng</p>
+        <h1 id="page-title">Chỉnh sửa bình luận trôi nổi</h1>
+        <p class="sub">Sửa tên và nội dung của 10 bong bóng. Bấm lưu, sau đó tải lại trang chính để xem thay đổi.</p>
+      </div>
+      <p id="counter" class="counter">10 / 10 bình luận</p>
+    </section>
+
+    <form id="comment-form">
+      <div id="comment-list"></div>
+      <div class="actions">
+        <div class="action-group">
+          <button type="button" id="reset-button">Khôi phục mẫu</button>
+          <a class="button-link" href="index.html">Mở trang chính</a>
+        </div>
+        <button class="save" type="submit">Lưu 10 bình luận</button>
+      </div>
+      <p id="status" role="status" aria-live="polite"></p>
+    </form>
+  </main>
+
+  <script>
+    const STORAGE_KEY = 'directchat-comment-samples';
+    const PASSWORD_HASH = 'a0050bf14206763748f44f14fa021cee4d9781d70e3c3281de38ebfe9b83bad3';
+    const accessGate = document.getElementById('access-gate');
+    const editorApp = document.getElementById('editor-app');
+    const accessForm = document.getElementById('access-form');
+    const accessTitle = document.getElementById('access-title');
+    const accessDescription = document.getElementById('access-description');
+    const accessPassword = document.getElementById('access-password');
+    const accessSubmit = document.getElementById('access-submit');
+    const accessStatus = document.getElementById('access-status');
+
+    async function hashPassword(password) {
+      const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(password));
+      return Array.from(new Uint8Array(buffer), (value) => value.toString(16).padStart(2, '0')).join('');
+    }
+
+    function configureAccessGate() {
+      accessPassword.autocomplete = 'current-password';
+      accessTitle.textContent = 'Mở trang chỉnh sửa';
+      accessDescription.textContent = 'Nhập mật khẩu để quản lý các bình luận trôi nổi.';
+      accessSubmit.textContent = 'Mở trang chỉnh sửa';
+    }
+
+    function unlockEditor() {
+      accessGate.hidden = true;
+      editorApp.hidden = false;
+      document.getElementById('comment-list').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    accessForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const password = accessPassword.value;
+      accessStatus.textContent = '';
+
+      if (!crypto.subtle) {
+        accessStatus.textContent = 'Trình duyệt này không hỗ trợ bảo vệ bằng mật khẩu.';
+        return;
+      }
+      accessSubmit.disabled = true;
+      try {
+        const passwordHash = await hashPassword(password);
+        if (passwordHash === PASSWORD_HASH) {
+          unlockEditor();
+        } else {
+          accessStatus.textContent = 'Mật khẩu chưa đúng. Vui lòng thử lại.';
+          accessPassword.select();
+        }
+      } catch {
+        accessStatus.textContent = 'Không thể xác thực mật khẩu trên trình duyệt này.';
+      } finally {
+        accessSubmit.disabled = false;
+      }
+    });
+
+    configureAccessGate();
+
+    const DEFAULT_COMMENTS = [
+      ['Minh Anh', 'Chủ Tịch Chuột thật sự rất tài năng!'],
+      ['Hoàng Nam', 'Chủ Tịch Chuột làm dự án quá ấn tượng.'],
+      ['Thu Trang', 'Chúc Chủ Tịch Chuột luôn bứt phá nhé!'],
+      ['Đức Huy', 'Phong cách của Chủ Tịch Chuột rất chuyên nghiệp.'],
+      ['Thanh Trúc', 'Chủ Tịch Chuột có gu sáng tạo tuyệt vời.'],
+      ['Quốc Bảo', 'Sản phẩm của Chủ Tịch Chuột quá mượt mà.'],
+      ['Lan Phương', 'Chủ Tịch Chuột đúng là đỉnh của chóp!'],
+      ['Gia Hưng', 'Khả năng thiết kế của Chủ Tịch Chuột rất nổi bật.'],
+      ['Hải Yến', 'Ủng hộ Chủ Tịch Chuột hết mình!'],
+      ['Tuấn Kiệt', 'Chủ Tịch Chuột làm mọi thứ rất chỉn chu.']
+    ].map(([name, text]) => ({ name, text }));
+
+    const list = document.getElementById('comment-list');
+    const form = document.getElementById('comment-form');
+    const status = document.getElementById('status');
+
+    function getSavedComments() {
+      try {
+        const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+        return Array.isArray(saved) && saved.length === 10 ? saved : DEFAULT_COMMENTS;
+      } catch {
+        return DEFAULT_COMMENTS;
+      }
+    }
+
+    function renderComments(comments) {
+      list.replaceChildren();
+      comments.forEach((comment, index) => {
+        const card = document.createElement('article');
+        card.className = 'comment-card';
+        card.innerHTML = `
+          <div class="number" aria-hidden="true">${index + 1}</div>
+          <label>Tên hiển thị
+            <input name="name-${index}" maxlength="32" required value="${escapeHtml(comment.name || '')}" />
+          </label>
+          <label>Nội dung bình luận
+            <textarea name="text-${index}" maxlength="120" required>${escapeHtml(comment.text || '')}</textarea>
+          </label>`;
+        list.appendChild(card);
+      });
+    }
+
+    function escapeHtml(value) {
+      const element = document.createElement('div');
+      element.textContent = value;
+      return element.innerHTML;
+    }
+
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const edited = DEFAULT_COMMENTS.map((_, index) => ({
+        name: form.elements[`name-${index}`].value.trim(),
+        text: form.elements[`text-${index}`].value.trim()
+      }));
+      if (edited.some((comment) => !comment.name || !comment.text)) {
+        status.textContent = 'Vui lòng điền đủ tên và nội dung cho cả 10 bình luận.';
+        return;
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(edited));
+      status.textContent = 'Đã lưu. Tải lại trang chính để thấy các bình luận mới.';
+    });
+
+    document.getElementById('reset-button').addEventListener('click', () => {
+      localStorage.removeItem(STORAGE_KEY);
+      renderComments(DEFAULT_COMMENTS);
+      status.textContent = 'Đã khôi phục bình luận mẫu. Bấm lưu để áp dụng.';
+    });
+
+    renderComments(getSavedComments());
+  </script>
+</body>
+</html>
