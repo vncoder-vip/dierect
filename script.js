@@ -1682,9 +1682,10 @@ let commentQueue = [];
 let activeCommentIndex = -1;
 let activeCommentNode = null;
 let commentLifeTimer = 0;
-const COMMENT_DURATION = 15; // seconds per comment
+const COMMENT_DURATION = 30; // seconds per comment — slow elliptical drift
 const BH_RADIUS = 11; // event horizon visual radius (~7.8 * 1.45)
-const ORBIT_START_RADIUS = BH_RADIUS + 16;
+const ORBIT_START_RADIUS_A = BH_RADIUS + 22;
+const ORBIT_START_RADIUS_B = BH_RADIUS + 14;
 
 function buildCommentQueue() {
   commentQueue = initialComments.map((c, i) => ({ ...c, index: i }));
@@ -1719,9 +1720,9 @@ function startNextComment() {
 
   const startAngle = Math.random() * Math.PI * 2;
   sprite.position.set(
-    Math.cos(startAngle) * ORBIT_START_RADIUS,
+    Math.cos(startAngle) * ORBIT_START_RADIUS_A,
     Math.sin(startAngle) * 3,
-    Math.sin(startAngle) * ORBIT_START_RADIUS
+    Math.sin(startAngle) * ORBIT_START_RADIUS_B
   );
 
   scene.add(sprite);
@@ -1729,7 +1730,8 @@ function startNextComment() {
   activeCommentNode = {
     sprite,
     angle: startAngle,
-    startRadius: ORBIT_START_RADIUS,
+    startRadiusA: ORBIT_START_RADIUS_A,
+    startRadiusB: ORBIT_START_RADIUS_B,
     orbitTilt: (Math.random() - 0.5) * 0.6
   };
 
@@ -1751,12 +1753,13 @@ function updateActiveComment(deltaTime) {
   commentLifeTimer += deltaTime;
   const progress = Math.min(commentLifeTimer / COMMENT_DURATION, 1);
 
-  // Spiral: radius shrinks from startRadius → 0, angle rotates faster
-  const currentRadius = activeCommentNode.startRadius * (1 - progress);
-  const angle = activeCommentNode.angle + progress * Math.PI * 4;
+  // Elliptical spiral: radii shrink from start → 0, angle rotates slowly
+  const currentRadiusA = activeCommentNode.startRadiusA * (1 - progress);
+  const currentRadiusB = activeCommentNode.startRadiusB * (1 - progress);
+  const angle = activeCommentNode.angle + progress * Math.PI * 2; // slower rotation (2 PI over 30s)
 
-  const x = Math.cos(angle) * currentRadius;
-  const z = Math.sin(angle) * currentRadius;
+  const x = Math.cos(angle) * currentRadiusA;
+  const z = Math.sin(angle) * currentRadiusB;
   const y = Math.sin(angle * 2) * (2 + activeCommentNode.orbitTilt * 4) * (1 - progress * 0.7);
 
   activeCommentNode.sprite.position.x = x;
