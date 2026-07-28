@@ -5,9 +5,10 @@ description = "Chuột Chat Flask app"
 requires-python = ">=3.11"
 dependencies = [
     "flask==2.3.2",
-    "psycopg2-binary==2.9.7",
     "requests==2.31.0",
 ]
+[project.optional-dependencies]
+postgres = ["psycopg2-binary==2.9.7"]
 
 [build-system]
 requires = ["setuptools>=61.0"]
