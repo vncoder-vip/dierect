@@ -1751,31 +1751,51 @@ function updateActiveComment(deltaTime) {
   if (!activeCommentNode) return;
 
   commentLifeTimer += deltaTime;
-  const progress = Math.min(commentLifeTimer / COMMENT_DURATION, 1);
+  const progress = Math.min(commentLifeTimer / COMMENT_DURATION, 1); // 0→1 over 30s
 
-  // Elliptical spiral: radii shrink from start → 0, angle rotates slowly
-  const currentRadiusA = activeCommentNode.startRadiusA * (1 - progress);
-  const currentRadiusB = activeCommentNode.startRadiusB * (1 - progress);
-  const angle = activeCommentNode.angle + progress * Math.PI * 2; // slower rotation (2 PI over 30s)
+  // First 25 seconds (progress 0→0.833): orbit normally at full radius
+  // Last 5 seconds (progress 0.833→1): spiral into the black hole
+  const SPIRAL_START = 25 / 30; // ≈ 0.833
+  let currentRadiusA, currentRadiusB, angle;
+
+  if (progress < SPIRAL_START) {
+    // Orbiting — stay at start radius, circle around
+    currentRadiusA = activeCommentNode.startRadiusA;
+    currentRadiusB = activeCommentNode.startRadiusB;
+    angle = activeCommentNode.angle + progress * Math.PI * 1.8; // slow orbit
+  } else {
+    // Last 5 seconds — spiral in toward the black hole
+    const spiralProgress = (progress - SPIRAL_START) / (1 - SPIRAL_START); // 0→1 over last 5s
+    currentRadiusA = activeCommentNode.startRadiusA * (1 - spiralProgress);
+    currentRadiusB = activeCommentNode.startRadiusB * (1 - spiralProgress);
+    angle = activeCommentNode.angle + progress * Math.PI * 1.8 + spiralProgress * Math.PI * 3;
+  }
 
   const x = Math.cos(angle) * currentRadiusA;
   const z = Math.sin(angle) * currentRadiusB;
-  const y = Math.sin(angle * 2) * (2 + activeCommentNode.orbitTilt * 4) * (1 - progress * 0.7);
+  const y = Math.sin(angle * 2) * (2 + activeCommentNode.orbitTilt * 4) * (1 - progress * 0.5);
 
   activeCommentNode.sprite.position.x = x;
   activeCommentNode.sprite.position.y = y;
   activeCommentNode.sprite.position.z = z;
 
-  // Scale down as it approaches the black hole
-  const scaleFactor = 0.3 + 0.7 * (1 - progress);
+  // Full scale during orbit, shrink only in last 5 seconds
+  let scaleFactor = 1;
+  if (progress > SPIRAL_START) {
+    const spiralProgress = (progress - SPIRAL_START) / (1 - SPIRAL_START);
+    scaleFactor = 1 - spiralProgress * 0.7;
+  }
   const baseW = activeCommentNode.sprite.scale.x;
   const baseH = activeCommentNode.sprite.scale.y;
   activeCommentNode.sprite.scale.set(baseW * scaleFactor, baseH * scaleFactor, 1);
 
-  // Fade out near the end
-  if (progress > 0.7) {
-    const fadeOut = 1 - (progress - 0.7) / 0.3;
+  // Fade out only in the last 2 seconds
+  const FADE_START = 28 / 30; // ≈ 0.933
+  if (progress > FADE_START) {
+    const fadeOut = 1 - (progress - FADE_START) / (1 - FADE_START);
     activeCommentNode.sprite.material.opacity = Math.max(0, fadeOut);
+  } else {
+    activeCommentNode.sprite.material.opacity = 1;
   }
 
   if (progress >= 1) {
