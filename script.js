@@ -1529,7 +1529,7 @@ function focusOnBlackHole() {
   cameraTransitioning = true;
   playCelestialAudio('black hole');
 
-  const dist = 26;
+  const dist = 38;
   const angle = Math.atan2(camera.position.z, camera.position.x);
   cameraPositionTarget.set(Math.cos(angle) * dist, 4, Math.sin(angle) * dist);
   cameraLookTarget.set(0, 0, 0);
