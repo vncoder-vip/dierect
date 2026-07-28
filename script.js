@@ -1716,7 +1716,7 @@ function startNextComment() {
 
   const sprite = new THREE.Sprite(material);
   const canvasAspect = canvas.width / canvas.height;
-  sprite.scale.set(canvasAspect * 3.2, 3.2, 1);
+  sprite.scale.set(canvasAspect * 3.2 * 1.35, 3.2 * 1.35, 1);
 
   const startAngle = Math.random() * Math.PI * 2;
   sprite.position.set(
