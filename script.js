@@ -1796,21 +1796,22 @@ function addCommentSprite(name, text, index) {
   });
 
   const sprite = new THREE.Sprite(material);
-  sprite.scale.set(16, 4.5, 1);
+
+  // Scale sprite proportionally so multi-line text fits
+  const canvasAspect = canvas.width / canvas.height;
+  sprite.scale.set(canvasAspect * 3.2, 3.2, 1);
 
   const total = initialComments.length;
+  const radius = 42;
   const initialAngle = (index / total) * Math.PI * 2;
-
-  const a = 32 + (index % 5) * 6.5;
-  const b = 20 + (index % 4) * 4.8;
 
   const node = {
     sprite: sprite,
     angle: initialAngle,
-    a: a,
-    b: b,
-    tilt: (index % 3 - 1) * 0.25,
-    orbitSpeed: 0.00075 + Math.random() * 0.0005
+    a: radius,
+    b: radius,
+    tilt: 0,
+    orbitSpeed: 0.0005 + Math.random() * 0.0003
   };
 
   scene.add(sprite);
