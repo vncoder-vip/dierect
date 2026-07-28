@@ -7,13 +7,19 @@ async function getSanityClient() {
     const apiVersion = /^\d{4}-\d{2}-\d{2}$/.test(configuredApiVersion)
       ? configuredApiVersion
       : '2026-07-28';
-    clientPromise = import('@sanity/client').then(({ createClient }) => createClient({
-      projectId: process.env.SANITY_PROJECT_ID,
-      dataset: process.env.SANITY_DATASET || 'production',
-      apiVersion,
-      useCdn: false,
-      token: process.env.SANITY_API_TOKEN
-    }));
+    clientPromise = import('@sanity/client').then((mod) => {
+      const createClient = mod.createClient || mod.default || mod;
+      if (typeof createClient !== 'function') {
+        throw new Error('Unable to load createClient from @sanity/client');
+      }
+      return createClient({
+        projectId: process.env.SANITY_PROJECT_ID,
+        dataset: process.env.SANITY_DATASET || 'production',
+        apiVersion,
+        useCdn: false,
+        token: process.env.SANITY_API_TOKEN
+      });
+    });
   }
   return clientPromise;
 }
