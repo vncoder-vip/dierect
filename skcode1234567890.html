@@ -43,6 +43,19 @@
       </div>
       <p id="status" role="status" aria-live="polite"></p>
     </form>
+
+    <section class="remote-comments" aria-labelledby="remote-comments-title">
+      <div class="remote-comments-heading">
+        <div>
+          <p class="eyebrow">Sanity Content Lake</p>
+          <h2 id="remote-comments-title">Bình luận đã đồng bộ</h2>
+        </div>
+        <button type="button" id="refresh-remote-comments">Làm mới</button>
+      </div>
+      <p class="sub">Các bình luận này được lưu trên Sanity và sẽ được khôi phục sau mỗi lần deploy.</p>
+      <div id="remote-comment-list" class="remote-comment-list"></div>
+      <p id="remote-status" role="status" aria-live="polite"></p>
+    </section>
   </main>
 
   <script>
@@ -73,6 +86,7 @@
       accessGate.hidden = true;
       editorApp.hidden = false;
       document.getElementById('comment-list').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      loadRemoteComments();
     }
 
     accessForm.addEventListener('submit', async (event) => {
@@ -118,6 +132,8 @@
     const list = document.getElementById('comment-list');
     const form = document.getElementById('comment-form');
     const status = document.getElementById('status');
+    const remoteList = document.getElementById('remote-comment-list');
+    const remoteStatus = document.getElementById('remote-status');
 
     function getSavedComments() {
       try {
@@ -170,6 +186,68 @@
       renderComments(DEFAULT_COMMENTS);
       status.textContent = 'Đã khôi phục bình luận mẫu. Bấm lưu để áp dụng.';
     });
+
+    async function loadRemoteComments() {
+      remoteStatus.textContent = 'Đang tải dữ liệu từ Sanity...';
+      try {
+        const response = await fetch('/api/comments');
+        if (!response.ok) throw new Error('Không thể tải bình luận');
+        const comments = await response.json();
+        renderRemoteComments(Array.isArray(comments) ? comments : []);
+        remoteStatus.textContent = `${comments.length} bình luận đang được lưu trên Sanity.`;
+      } catch {
+        remoteList.replaceChildren();
+        remoteStatus.textContent = 'Chưa thể kết nối Sanity. Kiểm tra biến môi trường trên Vercel.';
+      }
+    }
+
+    function renderRemoteComments(comments) {
+      remoteList.replaceChildren();
+      if (!comments.length) {
+        remoteList.textContent = 'Chưa có bình luận do người dùng gửi.';
+        return;
+      }
+
+      [...comments].reverse().forEach((comment) => {
+        const card = document.createElement('article');
+        card.className = 'remote-comment-card';
+
+        const content = document.createElement('div');
+        const name = document.createElement('strong');
+        name.textContent = comment.name || 'Không tên';
+        const text = document.createElement('p');
+        text.textContent = comment.text || '';
+        content.append(name, text);
+
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'delete-comment-button';
+        deleteButton.textContent = 'Xóa';
+        deleteButton.addEventListener('click', () => deleteRemoteComment(comment.id, deleteButton));
+        card.append(content, deleteButton);
+        remoteList.appendChild(card);
+      });
+    }
+
+    async function deleteRemoteComment(id, button) {
+      if (!window.confirm('Xóa bình luận này khỏi Sanity?')) return;
+      button.disabled = true;
+      remoteStatus.textContent = 'Đang xóa...';
+      try {
+        const response = await fetch('/api/comments', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id, password: accessPassword.value })
+        });
+        if (!response.ok) throw new Error('Delete failed');
+        await loadRemoteComments();
+      } catch {
+        button.disabled = false;
+        remoteStatus.textContent = 'Xóa thất bại. Kiểm tra ADMIN_DELETE_PASSWORD trên Vercel.';
+      }
+    }
+
+    document.getElementById('refresh-remote-comments').addEventListener('click', loadRemoteComments);
 
     renderComments(getSavedComments());
   </script>

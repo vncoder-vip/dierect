@@ -36,10 +36,22 @@ button:hover, .button-link:hover { transform: translateY(-1px); background: #354
 .save { background: linear-gradient(135deg, #ec4899, #7c3aed); box-shadow: 0 8px 22px rgba(139, 92, 246, .24); }
 .save:hover { background: linear-gradient(135deg, #f472b6, #8b5cf6); }
 #status { min-height: 22px; margin: 16px 0 0; color: #a5f3fc; font-weight: 700; }
+.remote-comments { margin-top: 54px; padding-top: 30px; border-top: 1px solid rgba(165, 180, 252, .18); }
+.remote-comments-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.remote-comments h2 { margin: 0; font-size: clamp(22px, 4vw, 30px); letter-spacing: -.03em; }
+.remote-comment-list { display: grid; gap: 10px; margin-top: 22px; }
+.remote-comment-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid rgba(165, 180, 252, .18); border-radius: 14px; background: rgba(15, 19, 43, .72); }
+.remote-comment-card strong { color: #f8fafc; }
+.remote-comment-card p { margin: 5px 0 0; color: #b8c2d9; line-height: 1.45; }
+.delete-comment-button { min-height: 38px; color: #fecaca; background: rgba(127, 29, 29, .55); }
+.delete-comment-button:hover { background: rgba(185, 28, 28, .78); }
+#remote-status { min-height: 22px; margin: 14px 0 0; color: #a5f3fc; font-weight: 700; }
 @media (max-width: 680px) {
   .shell { width: min(100% - 24px, 980px); padding-top: 34px; }
   .hero, .comment-card { align-items: stretch; }
   .hero { flex-direction: column; }
   .comment-card { grid-template-columns: 36px 1fr; }
   .comment-card label:last-child { grid-column: 1 / -1; }
+  .remote-comments-heading, .remote-comment-card { align-items: stretch; flex-direction: column; }
+  .delete-comment-button { width: 100%; }
 }
