@@ -101,17 +101,17 @@ let neutronGroup, neutronCore, neutronAura, beamConeTop, beamConeBottom;
 
 // Celestial audio: replace the previous track whenever focus changes.
 const CELESTIAL_AUDIO_FILES = {
-  mercury: 'âm thanh của mecury.mp3',
+  mercury: 'mercury.mp3',
   earth: [
-    'âm thanh của trái đất random 1.mp3',
-    'âm thanh của trái đất random 2.mp3',
-    'âm thanh của trái đất random 3.mp3',
-    'âm thanh của trái đất random 4.mp3',
-    'âm thanh của trái đất random 5.mp3'
+    'earth1.mp3',
+    'earth2.mp3',
+    'earth3.mp3',
+    'earth4.mp3',
+    'earth5.mp3'
   ],
-  shared: 'âm thanh của venus.mp3',
-  blackHole: 'âm thanh hố đen.mp3',
-  neutron: 'âm thanh sao neutron.mp3'
+  shared: 'venus.mp3',
+  blackHole: 'blackhole.mp3',
+  neutron: 'neutron.mp3'
 };
 const PLANET_AUDIO_FILES = {
   Mercury: CELESTIAL_AUDIO_FILES.mercury,
