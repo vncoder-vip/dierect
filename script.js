@@ -204,16 +204,47 @@ let cameraDistance = 50;
 let raycaster;
 let mouse = new THREE.Vector2();
 
-// 1. Create Canvas Messenger Bubble Texture
+// 1. Create Canvas Messenger Bubble Texture — supports multi-line text
 function createMessengerBubbleCanvas(name, text) {
+  const MAX_WIDTH = 800;
+  const LINE_HEIGHT = 28;
+  const PADDING_X = 24;
+  const TEXT_START_Y = 96;
+  const BUBBLE_MARGIN = 64;
+  const BUBBLE_RADIUS = 28;
+  const BUBBLE_MIN_HEIGHT = 142;
+
+  // Step 1: measure text to determine number of lines
+  const measureCanvas = document.createElement('canvas');
+  const measureCtx = measureCanvas.getContext('2d');
+  measureCtx.font = '500 21px "Plus Jakarta Sans", sans-serif';
+  const maxTextWidth = MAX_WIDTH - BUBBLE_MARGIN * 2 - PADDING_X * 2;
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = '';
+  for (const word of words) {
+    const testLine = currentLine ? currentLine + ' ' + word : word;
+    if (measureCtx.measureText(testLine).width > maxTextWidth && currentLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = testLine;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+
+  const textBlockHeight = Math.max(lines.length, 1) * LINE_HEIGHT;
+  const bubbleHeight = Math.max(BUBBLE_MIN_HEIGHT, TEXT_START_Y + textBlockHeight + 20);
+  const canvasHeight = bubbleHeight + 34;
+
   const canvas = document.createElement('canvas');
+  canvas.width = MAX_WIDTH;
+  canvas.height = canvasHeight;
   const ctx = canvas.getContext('2d');
-  canvas.width = 640;
-  canvas.height = 176;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const bubbleX = 64, bubbleY = 14, bubbleWidth = 556, bubbleHeight = 142, radius = 28;
+  const bubbleX = BUBBLE_MARGIN, bubbleY = 14, bubbleWidth = MAX_WIDTH - BUBBLE_MARGIN * 2, radius = BUBBLE_RADIUS;
 
   const gradient = ctx.createLinearGradient(bubbleX, bubbleY, bubbleX + bubbleWidth, bubbleY + bubbleHeight);
   gradient.addColorStop(0, '#ec4899');
@@ -259,13 +290,13 @@ function createMessengerBubbleCanvas(name, text) {
   ctx.textBaseline = 'alphabetic';
   ctx.font = 'bold 23px "Plus Jakarta Sans", sans-serif';
   ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
-  ctx.fillText(name, bubbleX + 24, bubbleY + 46);
+  ctx.fillText(name, bubbleX + PADDING_X, bubbleY + 46);
 
   ctx.font = '500 21px "Plus Jakarta Sans", sans-serif';
   ctx.fillStyle = '#ffffff';
-  let displayMsg = text;
-  if (displayMsg.length > 36) displayMsg = displayMsg.substring(0, 34) + '...';
-  ctx.fillText(displayMsg, bubbleX + 24, bubbleY + 96);
+  lines.forEach((line, i) => {
+    ctx.fillText(line, bubbleX + PADDING_X, bubbleY + TEXT_START_Y + i * LINE_HEIGHT);
+  });
 
   return canvas;
 }
