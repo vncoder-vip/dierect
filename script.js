@@ -1471,8 +1471,21 @@ function setupTargetFinder() {
   const targetSelect = document.getElementById('celestial-target');
   const focusButton = document.getElementById('focus-target');
   const freeOrbitButton = document.getElementById('free-orbit');
+  const toggleButton = document.getElementById('toggle-telescope');
+  const targetFinder = document.querySelector('.target-finder');
 
   if (!targetSelect || !focusButton || !freeOrbitButton) return;
+
+  // Toggle telescope panel visibility
+  if (toggleButton && targetFinder) {
+    toggleButton.addEventListener('click', () => {
+      const isHidden = targetFinder.style.display === 'none';
+      targetFinder.style.display = isHidden ? '' : 'none';
+      toggleButton.classList.toggle('active', isHidden);
+    });
+    // Start hidden
+    targetFinder.style.display = 'none';
+  }
 
   PLANET_DATA.forEach((planet) => {
     const option = document.createElement('option');

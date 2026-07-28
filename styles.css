@@ -135,6 +135,45 @@ html, body {
   color: #ffffff;
 }
 
+.nav-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.btn-telescope {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: rgba(15, 23, 42, 0.8);
+  border: 1px solid var(--border-light);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-telescope:hover {
+  color: #ffffff;
+  border-color: var(--border-accent);
+  background: rgba(236, 72, 153, 0.15);
+  box-shadow: 0 0 20px rgba(236, 72, 153, 0.3);
+}
+
+.btn-telescope.active {
+  color: #ffffff;
+  border-color: var(--border-accent);
+  background: rgba(236, 72, 153, 0.2);
+  box-shadow: 0 0 20px rgba(236, 72, 153, 0.4);
+}
+
+.btn-telescope i {
+  width: 18px;
+  height: 18px;
+}
+
 .btn-launch {
   display: inline-flex;
   align-items: center;
