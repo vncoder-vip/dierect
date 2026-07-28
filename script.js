@@ -118,8 +118,6 @@ function playCelestialAudio(targetName) {
   }
 
   try {
-    // Construct an absolute URL to avoid relative-path quirks and ensure
-    // proper percent-encoding for non-ASCII filenames.
     const audioUrl = new URL(fileName, location.origin + '/').href;
     activeCelestialAudio = new Audio(audioUrl);
     activeCelestialAudio.preload = 'auto';
@@ -143,11 +141,11 @@ function stopCelestialAudio() {
 // Neutron Star Jet Particles
 let jetParticleSystem = null;
 const JET_COUNT = 320;
-const jetData = []; // per-particle state
+const jetData = [];
 
 // ─── Solar System ────────────────────────────────────────────────────────────
 let solarSystemGroup = null;
-const solarPlanets   = []; // { mesh, orbitAngle, orbitSpeed, a, b, cx, selfSpinAxis, moonMesh, moonAngle }
+const solarPlanets   = [];
 
 // Procedural deep-sky galaxy catalogue.
 let galaxyEntries = [];
@@ -158,8 +156,6 @@ const GALAXY_DATA = [
   { id: 'eye', name: 'Thiên hà Con Mắt (NGC 4435/4438)', position: [126, -30, -142], tilt: 0.58, focusDistance: 26, arms: 1, tint: 0xf1b6ff, warmCore: 0xffc7a0, population: 10_000_000_000 }
 ];
 
-// Real relative data — compressed scale so system fits in view
-// dist = semi-major axis in local SS units, eccentricity from real data
 const SS_ORIGIN = new THREE.Vector3(-130, -55, -130);
 const PLANET_DATA = [
   { name:'Mercury', dist: 2.0,  e:0.206, size:0.10, period: 0.241, color:0xa8a0a0, tilt:0.03 },
@@ -194,13 +190,11 @@ let cameraFocusTarget = FOCUS_SOLAR_SYSTEM;
 let cameraLookTarget    = new THREE.Vector3(0, 0, 0);
 let cameraPositionTarget = new THREE.Vector3(0, 0, 52);
 let cameraTransitioning = false;
-let focusedPlanetEntry  = null;  // which solarPlanets[] entry is focused
+let focusedPlanetEntry  = null;
 let focusedGalaxyEntry  = null;
 
-// Default camera distance
 let cameraDistance = 50;
 
-// Raycaster for click detection
 let raycaster;
 let mouse = new THREE.Vector2();
 
@@ -214,7 +208,6 @@ function createMessengerBubbleCanvas(name, text) {
   const BUBBLE_RADIUS = 28;
   const BUBBLE_MIN_HEIGHT = 142;
 
-  // Step 1: measure text to determine number of lines
   const measureCanvas = document.createElement('canvas');
   const measureCtx = measureCanvas.getContext('2d');
   measureCtx.font = '500 21px "Plus Jakarta Sans", sans-serif';
@@ -359,7 +352,6 @@ function createStarfield() {
 function createHollywoodBlackHole() {
   blackHoleGroup = new THREE.Group();
 
-  // Relative GR-inspired scale: event horizon r_s, photon sphere 1.5 r_s.
   const schwarzschildRadius = 7.8;
 
   const coreGeo = new THREE.SphereGeometry(schwarzschildRadius, 64, 64);
@@ -368,8 +360,6 @@ function createHollywoodBlackHole() {
   blackHoleGroup.add(blackHoleCore);
 
   const rimGeo = new THREE.SphereGeometry(schwarzschildRadius * 1.5, 128, 96);
-  // Fresnel shell: the photon ring stays visible around the event horizon
-  // from every viewing angle instead of behaving like a front-facing disc.
   const rimMat = new THREE.ShaderMaterial({
     transparent: true,
     blending: THREE.AdditiveBlending,
@@ -424,7 +414,6 @@ function createHollywoodBlackHole() {
   gravitationalLensingAura = new THREE.Mesh(auraGeo, auraMat);
   blackHoleGroup.add(gravitationalLensingAura);
 
-  // Accretion disk: layered hot gas rings make the event horizon easier to read.
   const diskLayers = [
     { inner: schwarzschildRadius * 1.62, outer: schwarzschildRadius * 2.0, color: 0xfffff5, opacity: 0.98 },
     { inner: schwarzschildRadius * 2.02, outer: schwarzschildRadius * 2.46, color: 0xffedb96a, opacity: 0.58 },
@@ -449,7 +438,6 @@ function createHollywoodBlackHole() {
   });
   blackHoleGroup.userData.accretionDisk = true;
 
-  // Presentation scale only; all internal ratios above remain unchanged.
   blackHoleGroup.scale.setScalar(1.45);
 
   scene.add(blackHoleGroup);
@@ -459,17 +447,13 @@ function createHollywoodBlackHole() {
 // 4. Build Ultra-Fast Spinning Pulsar Neutron Star in Far Distance
 function createDistantNeutronStar() {
   neutronGroup = new THREE.Group();
-
-  // Position in far distance top-right
   neutronGroup.position.set(55, 32, -65);
 
-  // A. Super Dense Core Sphere
   const nCoreGeo = new THREE.SphereGeometry(1.6, 32, 32);
   const nCoreMat = new THREE.MeshBasicMaterial({ color: 0x60a5fa });
   neutronCore = new THREE.Mesh(nCoreGeo, nCoreMat);
   neutronGroup.add(neutronCore);
 
-  // B. Intense Plasma Aura
   const nAuraGeo = new THREE.SphereGeometry(2.4, 32, 32);
   const nAuraMat = new THREE.MeshBasicMaterial({
     color: 0x38bdf8,
@@ -481,7 +465,6 @@ function createDistantNeutronStar() {
   neutronAura = new THREE.Mesh(nAuraGeo, nAuraMat);
   neutronGroup.add(neutronAura);
 
-  // Magnetic field loops around the dense core.
   [2.0, 2.35, 2.7].forEach((radius, index) => {
     const fieldRing = new THREE.Mesh(
       new THREE.TorusGeometry(radius, 0.035 + index * 0.018, 8, 64),
@@ -498,7 +481,6 @@ function createDistantNeutronStar() {
     neutronGroup.add(fieldRing);
   });
 
-  // Tiny hot spots suggest the uneven, magnetised surface of the star.
   [
     { x: 0.9, y: 0.75, z: 1.15 },
     { x: -0.75, y: -0.9, z: 1.05 }
@@ -516,11 +498,9 @@ function createDistantNeutronStar() {
     neutronGroup.add(hotSpot);
   });
 
-  // C. 2 Ultra-Thin Infinite Relativistic Polar Laser Beams (3 layers per pole)
   const BEAM_LENGTH = 600;
-  const BEAM_OFFSET = BEAM_LENGTH / 2; // cylinder origin is centre, shift so base starts at core
+  const BEAM_OFFSET = BEAM_LENGTH / 2;
 
-  // Layer materials ─ reused for both poles
   const matCore = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true, opacity: 0.95,
@@ -528,13 +508,13 @@ function createDistantNeutronStar() {
     depthWrite: false, side: THREE.DoubleSide
   });
   const matGlow = new THREE.MeshBasicMaterial({
-    color: 0x38bdf8,   // sky-blue
+    color: 0x38bdf8,
     transparent: true, opacity: 0.35,
     blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.DoubleSide
   });
   const matHaze = new THREE.MeshBasicMaterial({
-    color: 0x0ea5e9,   // deeper blue
+    color: 0x0ea5e9,
     transparent: true, opacity: 0.10,
     blending: THREE.AdditiveBlending,
     depthWrite: false, side: THREE.DoubleSide
@@ -543,14 +523,9 @@ function createDistantNeutronStar() {
   function makeThinBeam(yDir) {
     const group = new THREE.Group();
     group.position.y = yDir * BEAM_OFFSET;
-
-    // White core — razor thin
     group.add(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, BEAM_LENGTH, 8, 1, false), matCore));
-    // Blue inner glow
     group.add(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, BEAM_LENGTH, 8, 1, false), matGlow));
-    // Outer blue haze
     group.add(new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, BEAM_LENGTH, 8, 1, false), matHaze));
-
     return group;
   }
 
@@ -560,8 +535,6 @@ function createDistantNeutronStar() {
   neutronGroup.add(beamConeBottom);
 
   scene.add(neutronGroup);
-
-  // D. Jet Particle System (world-space Points — not child of neutronGroup so it stays stable)
   createNeutronJetParticles();
 }
 
@@ -571,7 +544,6 @@ function createNeutronJetParticles() {
   const colors    = new Float32Array(JET_COUNT * 3);
   const sizes     = new Float32Array(JET_COUNT);
 
-  // Sprite texture: small bright dot
   const ptCanvas = document.createElement('canvas');
   ptCanvas.width = 32; ptCanvas.height = 32;
   const ptCtx = ptCanvas.getContext('2d');
@@ -585,20 +557,18 @@ function createNeutronJetParticles() {
   const ptTex = new THREE.CanvasTexture(ptCanvas);
 
   for (let i = 0; i < JET_COUNT; i++) {
-    // initialise off-screen; resetJetParticle will place them properly
     positions[i * 3]     = 0;
     positions[i * 3 + 1] = 0;
     positions[i * 3 + 2] = 0;
     colors[i * 3]     = 1; colors[i * 3 + 1] = 1; colors[i * 3 + 2] = 1;
     sizes[i] = 0;
 
-    // stagger birth so particles don't all start at the same frame
     jetData.push({
-      pole:      i % 2 === 0 ? 1 : -1, // +1 = top, -1 = bottom
-      life:      Math.random(),          // 0..1 normalised age
+      pole:      i % 2 === 0 ? 1 : -1,
+      life:      Math.random(),
       maxLife:   0.6 + Math.random() * 0.8,
       speed:     0.55 + Math.random() * 0.55,
-      radialOff: (Math.random() - 0.5) * 0.02, // near-zero lateral scatter — hug the thin beam
+      radialOff: (Math.random() - 0.5) * 0.02,
       pos:       new THREE.Vector3()
     });
   }
@@ -624,11 +594,9 @@ function createNeutronJetParticles() {
 function updateJetParticles() {
   if (!jetParticleSystem || !neutronGroup) return;
 
-  // Get neutron star world position
   const nsWorldPos = new THREE.Vector3();
   neutronGroup.getWorldPosition(nsWorldPos);
 
-  // Get neutron group's world-space Y axis (beam axis after wobble)
   const beamAxis = new THREE.Vector3(0, 1, 0);
   beamAxis.applyQuaternion(neutronGroup.quaternion).normalize();
 
@@ -638,10 +606,9 @@ function updateJetParticles() {
 
   for (let i = 0; i < JET_COUNT; i++) {
     const d = jetData[i];
-    d.life += 0.016 / d.maxLife; // advance normalised age each frame ~60fps
+    d.life += 0.016 / d.maxLife;
 
     if (d.life >= 1.0) {
-      // recycle: reset to pole origin
       d.life = 0;
       d.speed   = 0.55 + Math.random() * 0.55;
       d.maxLife = 0.6  + Math.random() * 0.8;
@@ -649,10 +616,8 @@ function updateJetParticles() {
       d.pos.copy(nsWorldPos);
     }
 
-    // Travel distance along beam axis
-    const dist = d.life * d.maxLife * d.speed * 42; // 42 = max jet reach
+    const dist = d.life * d.maxLife * d.speed * 42;
 
-    // Slight radial spread perpendicular to beam
     const perpA = new THREE.Vector3(beamAxis.z, 0, -beamAxis.x).normalize();
     if (perpA.lengthSq() < 0.001) perpA.set(1, 0, 0);
 
@@ -662,14 +627,12 @@ function updateJetParticles() {
 
     posAttr.setXYZ(i, jetPos.x, jetPos.y, jetPos.z);
 
-    // Colour: white-hot near source → cool cyan/blue → transparent
-    const t = d.life; // 0=birth, 1=death
-    const r = 1.0 - t * 0.5;          // 1 → 0.5
-    const g = 1.0 - t * 0.35;         // 1 → 0.65
-    const b = 1.0;                     // always full blue channel
+    const t = d.life;
+    const r = 1.0 - t * 0.5;
+    const g = 1.0 - t * 0.35;
+    const b = 1.0;
     colAttr.setXYZ(i, r, g, b);
 
-    // Size: big at source, thin out as it travels
     sizeAttr.setX(i, (1.0 - t) * 1.2 + 0.15);
   }
 
@@ -686,20 +649,16 @@ function createSolarSystem() {
   solarSystemGroup.position.copy(SS_ORIGIN);
   scene.add(solarSystemGroup);
 
-  // Neutral white sunlight; the solar surface can stay warm without tinting planets.
   const sunLight = new THREE.PointLight(0xffffff, 3.2, 260, 1.6);
   sunLight.position.copy(SS_ORIGIN);
   scene.add(sunLight);
 
-  // ── Sun ──────────────────────────────────────────────────────────────────
-  // Core
   const sunMesh = new THREE.Mesh(
     new THREE.SphereGeometry(1.1, 32, 32),
     new THREE.MeshBasicMaterial({ color: 0xffee88 })
   );
   solarSystemGroup.add(sunMesh);
 
-  // Inner corona glow
   const sunGlow1 = new THREE.Mesh(
     new THREE.SphereGeometry(1.6, 32, 32),
     new THREE.MeshBasicMaterial({ color:0xffaa22, transparent:true, opacity:0.25,
@@ -707,7 +666,6 @@ function createSolarSystem() {
   );
   solarSystemGroup.add(sunGlow1);
 
-  // Outer corona haze
   const sunGlow2 = new THREE.Mesh(
     new THREE.SphereGeometry(2.6, 32, 32),
     new THREE.MeshBasicMaterial({ color:0xff7700, transparent:true, opacity:0.08,
@@ -715,12 +673,11 @@ function createSolarSystem() {
   );
   solarSystemGroup.add(sunGlow2);
 
-  // ── Asteroid Belt (Mars–Jupiter gap) ─────────────────────────────────────
   const beltCount = 800;
   const beltGeo   = new THREE.BufferGeometry();
   const beltPos   = new Float32Array(beltCount * 3);
   for (let i = 0; i < beltCount; i++) {
-    const r     = 8.4 + Math.random() * 2.2;   // between Mars & Jupiter
+    const r     = 8.4 + Math.random() * 2.2;
     const angle = Math.random() * Math.PI * 2;
     const y     = (Math.random() - 0.5) * 0.4;
     beltPos[i*3]   = Math.cos(angle) * r;
@@ -734,16 +691,15 @@ function createSolarSystem() {
   });
   solarSystemGroup.add(new THREE.Points(beltGeo, beltMat));
 
-  // ── Helper: draw elliptical orbit line ───────────────────────────────────
   function drawOrbit(a, ecc, color) {
-    const b  = a * Math.sqrt(1 - ecc * ecc);  // semi-minor axis
-    const cx = a * ecc;                        // focus offset along +X
+    const b  = a * Math.sqrt(1 - ecc * ecc);
+    const cx = a * ecc;
     const pts = [];
     const SEG = 256;
     for (let i = 0; i <= SEG; i++) {
       const θ = (i / SEG) * Math.PI * 2;
       pts.push(new THREE.Vector3(
-        a  * Math.cos(θ) - cx,  // shift so sun (focus) is at origin
+        a  * Math.cos(θ) - cx,
         0,
         b  * Math.sin(θ)
       ));
@@ -756,9 +712,7 @@ function createSolarSystem() {
     return new THREE.LineLoop(geo, mat);
   }
 
-  // ── Helper: planet sphere with equatorial stripe texture ─────────────────
   function makePlanetMesh(pd) {
-    // Procedural canvas texture: each planet gets deterministic surface details.
     const pc = document.createElement('canvas');
     pc.width = 256; pc.height = 128;
     const px = pc.getContext('2d');
@@ -766,7 +720,6 @@ function createSolarSystem() {
     const g = (pd.color >>  8) & 0xff;
     const b =  pd.color        & 0xff;
 
-    // Seeded multi-octave noise keeps terrain stable and gives it natural variation.
     let seed = pd.color ^ pd.name.length * 997;
     const random = () => {
       seed = (seed * 1664525 + 1013904223) >>> 0;
@@ -790,7 +743,6 @@ function createSolarSystem() {
       smoothNoise(x * 4.4, y * 4.4) * 0.15
     );
 
-    // Paint a latitude-aware base map instead of a flat two-stop gradient.
     const pixels = px.createImageData(256, 128);
     const isGasGiant = pd.name === 'Jupiter' || pd.name === 'Saturn';
     for (let y = 0; y < 128; y++) {
@@ -809,7 +761,6 @@ function createSolarSystem() {
     }
     px.putImageData(pixels, 0, 0);
 
-    // Atmospheric bands, especially visible on gas and ice giants.
     const bandCount = pd.name === 'Jupiter' || pd.name === 'Saturn' ? 18 : 10;
     for (let i = 0; i < bandCount; i++) {
       const y = (i / bandCount) * 128 + (random() - 0.5) * 5;
@@ -819,7 +770,6 @@ function createSolarSystem() {
     }
 
     if (pd.name === 'Earth') {
-      // Irregular continent silhouettes and thin cloud streaks.
       px.fillStyle = 'rgba(39, 116, 74, 0.72)';
       for (let i = 0; i < 9; i++) {
         const cx = 20 + random() * 220;
@@ -842,14 +792,12 @@ function createSolarSystem() {
         px.fillRect(random() * 210, 14 + random() * 100, 20 + random() * 32, 1.5 + random() * 2);
       }
     } else if (pd.name === 'Jupiter' || pd.name === 'Saturn') {
-      // Storm cells add recognisable detail to the gas giants.
       px.fillStyle = pd.name === 'Jupiter' ? 'rgba(164,75,48,0.62)' : 'rgba(126,82,49,0.38)';
       for (let i = 0; i < 4; i++) {
         px.beginPath();
         px.ellipse(35 + random() * 190, 16 + random() * 95, 10 + random() * 16, 3 + random() * 6, 0, 0, Math.PI * 2);
         px.fill();
       }
-      // Curved wind lanes mimic the turbulent shear around each storm band.
       px.strokeStyle = pd.name === 'Jupiter' ? 'rgba(255,220,177,0.2)' : 'rgba(255,238,204,0.16)';
       px.lineWidth = 1.2;
       for (let i = 0; i < 24; i++) {
@@ -861,7 +809,6 @@ function createSolarSystem() {
         px.stroke();
       }
     } else if (pd.name === 'Mercury' || pd.name === 'Mars' || pd.name === 'Moon') {
-      // Realistic crater illusion: bright rim, dark inner wall and a soft floor.
       const drawCrater = (x, y, radius) => {
         const floor = px.createRadialGradient(x - radius * 0.25, y - radius * 0.3, radius * 0.1, x, y, radius);
         const isMars = pd.name === 'Mars';
@@ -889,7 +836,6 @@ function createSolarSystem() {
         px.fillRect(0, 122, 256, 6);
       }
     } else {
-      // Soft streaks and a few darker storms for the ice giants and Venus.
       px.fillStyle = 'rgba(10,20,80,0.18)';
       for (let i = 0; i < 5; i++) {
         px.beginPath();
@@ -898,7 +844,6 @@ function createSolarSystem() {
       }
     }
 
-    // Polar caps / atmosphere rim.
     px.globalAlpha = 0.18;
     px.fillStyle = '#ffffff';
     px.fillRect(0, 0, 256, 7);
@@ -936,16 +881,14 @@ function createSolarSystem() {
     return mesh;
   }
 
-  // ── Build each planet ─────────────────────────────────────────────────────
-  const BASE_SPEED = 0.008; // Earth orbital speed multiplier
+  const BASE_SPEED = 0.008;
 
   PLANET_DATA.forEach((pd) => {
     const a  = pd.dist;
     const e  = pd.e;
     const b  = a * Math.sqrt(1 - e * e);
-    const cx = a * e;                     // sun-to-focus offset
+    const cx = a * e;
 
-    // Planet mesh
     const mesh = makePlanetMesh(pd);
     solarSystemGroup.add(mesh);
 
@@ -956,28 +899,22 @@ function createSolarSystem() {
       a, b, cx,
       orbitAngle: Math.random() * Math.PI * 2,
       orbitSpeed: BASE_SPEED / pd.period,
-      // Saturn completes one rotation in about 10 h 39 min (0.444 Earth days).
-      // The multiplier keeps that rapid spin visible in this accelerated scene.
       selfSpin:   pd.name === 'Saturn' ? 0.004 / pd.rotationPeriod : 0.02 + Math.random() * 0.01,
       moonMesh:   null,
       moonAngle:  Math.random() * Math.PI * 2,
     };
 
-    // Tag mesh so we can recover the entry from any raycaster hit
     mesh.userData.planetEntry = entry;
 
-    // Invisible hitbox — much larger than visual so it’s easy to click from afar
     const hitboxRadius = Math.max(pd.size * 6, 1.2);
     const hitbox = new THREE.Mesh(
       new THREE.SphereGeometry(hitboxRadius, 8, 8),
       new THREE.MeshBasicMaterial({ visible: false, depthWrite: false })
     );
-    hitbox.userData.planetEntry = entry; // tag hitbox too
+    hitbox.userData.planetEntry = entry;
     mesh.add(hitbox);
 
-    // ── Saturn rings ─────────────────────────────────────────────────────
     if (pd.hasRings) {
-      // Ring A (bright)
       const ringA = new THREE.Mesh(
         new THREE.RingGeometry(pd.size * 1.4, pd.size * 2.2, 80),
         new THREE.MeshBasicMaterial({
@@ -986,11 +923,9 @@ function createSolarSystem() {
           blending:THREE.AdditiveBlending, depthWrite:false
         })
       );
-      // The ring plane is equatorial; the parent planet supplies Saturn's 26.7° axial tilt.
       ringA.rotation.x = Math.PI / 2;
       mesh.add(ringA);
 
-      // Ring B (fainter outer)
       const ringB = new THREE.Mesh(
         new THREE.RingGeometry(pd.size * 2.3, pd.size * 2.8, 80),
         new THREE.MeshBasicMaterial({
@@ -1002,7 +937,6 @@ function createSolarSystem() {
       ringB.rotation.x = Math.PI / 2;
       mesh.add(ringB);
 
-      // Fine ice-dust bands break up the otherwise flat ring silhouette.
       [0.9, 1.15, 1.42].forEach((scale, index) => {
         const detailRing = new THREE.Mesh(
           new THREE.RingGeometry(pd.size * scale, pd.size * (scale + 0.055), 96),
@@ -1020,7 +954,6 @@ function createSolarSystem() {
       });
     }
 
-    // ── Earth Moon ───────────────────────────────────────────────────────
     if (pd.hasMoon) {
       const moonMesh = makePlanetMesh({ name: 'Moon', size: 0.055, color: 0xb8b8b2, tilt: 0 });
       solarSystemGroup.add(moonMesh);
@@ -1164,25 +1097,22 @@ function createGalaxies() {
       seed = (seed * 1664525 + 1013904223) >>> 0;
       return seed / 4294967296;
     };
-    // Render a dense representative sample; config.population is the
-    // astronomical count represented by this GPU point cloud.
     const starCount = Math.round(28000 * scale);
     const positions = new Float32Array(starCount * 3);
     const colors = new Float32Array(starCount * 3);
     const cool = new THREE.Color(config.tint);
     const warm = new THREE.Color(config.warmCore);
     const stellarPalette = [
-      new THREE.Color(0x8fc9ff), // hot blue stars
-      new THREE.Color(0xc8e5ff), // blue-white stars
-      new THREE.Color(0xffffff), // white stars
-      new THREE.Color(0xfff0bd), // yellow stars
-      new THREE.Color(0xffbd72), // orange stars
-      new THREE.Color(0xff806e), // red stars
-      new THREE.Color(0xe5a7ff)  // young magenta stars
+      new THREE.Color(0x8fc9ff),
+      new THREE.Color(0xc8e5ff),
+      new THREE.Color(0xffffff),
+      new THREE.Color(0xfff0bd),
+      new THREE.Color(0xffbd72),
+      new THREE.Color(0xff806e),
+      new THREE.Color(0xe5a7ff)
     ];
 
     for (let i = 0; i < starCount; i++) {
-      // Uniform random disk sampling fills the spaces between the visible arms.
       const radius = Math.sqrt(random()) * 32 * scale;
       const angle = random() * Math.PI * 2;
       const x = Math.cos(angle) * radius;
@@ -1213,14 +1143,11 @@ function createGalaxies() {
     }));
     parent.add(stars);
 
-    // Tiny blue-white points stand in for planetary systems without creating
-    // billions of individual meshes.
     const planetCount = Math.round(11000 * scale);
     const planetPositions = new Float32Array(planetCount * 3);
     const planetColors = new Float32Array(planetCount * 3);
     const planetPalette = [0x78a7ff, 0x66e0d1, 0xffc875, 0xff8fc4, 0xb99bff, 0xd9f3ff, 0xfff0a8];
     for (let i = 0; i < planetCount; i++) {
-      // Independent random placement keeps planetary systems in the gaps too.
       const radius = Math.sqrt(random()) * 31 * scale;
       const angle = random() * Math.PI * 2;
       planetPositions[i * 3] = Math.cos(angle) * radius;
@@ -1245,7 +1172,6 @@ function createGalaxies() {
     });
     parent.add(new THREE.Points(planetGeometry, planetMaterial));
 
-    // Dense old-star bulge plus a soft luminous core.
     const bulge = new THREE.Mesh(
       new THREE.SphereGeometry(4.8 * scale, 24, 16),
       new THREE.MeshBasicMaterial({
@@ -1270,7 +1196,6 @@ function createGalaxies() {
     parent.add(core);
     addCentralBlackHole(parent, 0.92 * scale, config.warmCore);
 
-    // Dust lanes are darker, narrow particles crossing the luminous arms.
     const dustPositions = new Float32Array(Math.round(starCount * 0.34) * 3);
     for (let i = 0; i < dustPositions.length; i += 3) {
       const radius = (0.35 + random() * 0.95) * 28 * scale;
@@ -1299,7 +1224,6 @@ function createGalaxies() {
     galaxyGroup.userData.galaxyName = config.name;
     createDisk(galaxyGroup, config, index);
 
-    // Distinctive structural cues remain separate from the random star field.
     if (config.id === 'andromeda') {
       addGalaxyNeutronStar(galaxyGroup, [13.5, 0.85, -5.5], 1.08);
       [11, 17, 23].forEach((radius, ringIndex) => {
@@ -1354,7 +1278,6 @@ function createGalaxies() {
       galaxyGroup.add(eyeRing);
     }
 
-    // The Eye Galaxy is a close interacting pair, with a smaller companion and bridge.
     if (config.id === 'eye') {
       const companion = new THREE.Group();
       companion.position.set(7.8, 0.7, 1.6);
@@ -1393,26 +1316,19 @@ function updateSolarSystem(time) {
   if (!solarSystemGroup) return;
 
   solarPlanets.forEach((p) => {
-    // Advance orbital angle
     p.orbitAngle += p.orbitSpeed;
 
-    // Keplerian ellipse: planet at parametric angle θ
-    // x = a*cos(θ) - cx  (cx shifts so sun is at focus)
-    // z = b*sin(θ)
     const θ = p.orbitAngle;
     const lx = p.a * Math.cos(θ) - p.cx;
     const lz = p.b * Math.sin(θ);
 
     p.mesh.position.set(lx, 0, lz);
-      // Visual tidal-lock mode: keep Saturn's same face turned toward the Sun.
-      // (Saturn is not actually tidally locked; this is an intentional art mode.)
       if (p.tidalLocked) {
         p.mesh.rotation.y = p.orbitAngle;
       } else {
         p.mesh.rotation.y += p.selfSpin;
       }
 
-    // Moon orbits Earth in world-local coords
     if (p.moonMesh) {
       p.moonAngle += 0.08;
       const mr = 0.52;
@@ -1440,7 +1356,6 @@ async function initThree() {
   const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
   scene.add(ambientLight);
 
-  // Initialize raycaster
   raycaster = new THREE.Raycaster();
 
   createStarfield();
@@ -1449,10 +1364,9 @@ async function initThree() {
   createSolarSystem();
   const remoteComments = await loadRemoteComments();
   if (remoteComments.length) initialComments.push(...remoteComments.slice(-12));
-  initialComments.forEach((c, idx) => addCommentSprite(c.name, c.text, idx));
+  buildCommentQueue();
+  setTimeout(startNextComment, 1000);
 
-  // Start with an oblique, elevated view so the orbital plane and nearby bodies
-  // remain visible instead of presenting the solar system edge-on.
   currentRotationX = 0.52;
   targetRotationX = 0.52;
   currentRotationY = -0.62;
@@ -1466,7 +1380,7 @@ async function initThree() {
   animate();
 }
 
-// Target finder UI: focus the camera on a named celestial object.
+// Target finder UI
 function setupTargetFinder() {
   const targetSelect = document.getElementById('celestial-target');
   const focusButton = document.getElementById('focus-target');
@@ -1476,14 +1390,12 @@ function setupTargetFinder() {
 
   if (!targetSelect || !focusButton || !freeOrbitButton) return;
 
-  // Toggle telescope panel visibility
   if (toggleButton && targetFinder) {
     toggleButton.addEventListener('click', () => {
       const isHidden = targetFinder.style.display === 'none';
       targetFinder.style.display = isHidden ? '' : 'none';
       toggleButton.classList.toggle('active', isHidden);
     });
-    // Start hidden
     targetFinder.style.display = 'none';
   }
 
@@ -1520,7 +1432,6 @@ function setupTargetFinder() {
   });
 }
 
-// Show hint label for camera focus mode
 function showFocusHint(objectName) {
   let hint = document.getElementById('focus-hint');
   if (!hint) {
@@ -1555,33 +1466,26 @@ function hideFocusHint() {
   if (hint) hint.style.opacity = '0';
 }
 
-// Click detection setup
 function setupClickDetection() {
   renderer.domElement.addEventListener('click', onCanvasClick);
 }
 
 function onCanvasClick(event) {
-  // Ignore drags (mouseup already set isDragging)
   if (window._wasDragging) { window._wasDragging = false; return; }
-
-  // Ignore clicks on UI elements
   if (event.target.closest && event.target.closest('.navbar-container, .comment-card, button, a')) return;
 
   mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
   mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
 
-  // Ensure world matrices are fresh before raycasting
   scene.updateMatrixWorld(true);
   raycaster.setFromCamera(mouse, camera);
 
-  // 1. Black hole
   const bhObjects = blackHoleGroup ? blackHoleGroup.children : [];
   if (raycaster.intersectObjects(bhObjects).length > 0) {
     focusOnBlackHole();
     return;
   }
 
-  // 2. Neutron star
   if (neutronGroup) {
     if (raycaster.intersectObjects(neutronGroup.children, true).length > 0) {
       focusOnNeutronStar();
@@ -1589,11 +1493,9 @@ function onCanvasClick(event) {
     }
   }
 
-  // 3. Planets — intersect meshes + hitbox children recursively
   if (solarPlanets.length > 0) {
     const hits = raycaster.intersectObjects(solarPlanets.map(p => p.mesh), true);
     if (hits.length > 0) {
-      // Walk up from hit object to find planetEntry tag
       let obj = hits[0].object;
       let found = null;
       while (obj) {
@@ -1610,7 +1512,6 @@ function onCanvasClick(event) {
     }
   }
 
-  // 4. Procedural galaxies
   for (const galaxy of galaxyEntries) {
     if (raycaster.intersectObjects(galaxy.group.children, true).length > 0) {
       focusOnGalaxy(galaxy);
@@ -1618,7 +1519,6 @@ function onCanvasClick(event) {
     }
   }
 
-  // 5. Empty space — return to free orbit
   if (cameraFocusTarget !== FOCUS_FREE) {
     returnToFreeOrbit();
   }
@@ -1629,13 +1529,11 @@ function focusOnBlackHole() {
   cameraTransitioning = true;
   playCelestialAudio('black hole');
 
-  // Pull back enough to keep the enlarged photon sphere and disk in frame.
   const dist = 26;
   const angle = Math.atan2(camera.position.z, camera.position.x);
   cameraPositionTarget.set(Math.cos(angle) * dist, 4, Math.sin(angle) * dist);
   cameraLookTarget.set(0, 0, 0);
 
-  // Reset rotation so orbit controls work relative to black hole
   currentRotationX = 0;
   currentRotationY = Math.atan2(camera.position.x, camera.position.z);
   targetRotationX = 0;
@@ -1651,13 +1549,11 @@ function focusOnNeutronStar() {
   playCelestialAudio('neutron star');
 
   const nsPos = neutronGroup.position;
-  // Camera position: offset from neutron star
   const dist = 16;
   const dir = camera.position.clone().sub(nsPos).normalize();
   cameraPositionTarget.copy(nsPos).addScaledVector(dir, dist);
   cameraLookTarget.copy(nsPos);
 
-  // Set rotation offsets for orbit around neutron star
   const relDir = camera.position.clone().sub(nsPos);
   currentRotationY = Math.atan2(relDir.x, relDir.z);
   currentRotationX = Math.asin(Math.max(-1, Math.min(1, relDir.y / relDir.length())));
@@ -1690,14 +1586,11 @@ function focusOnPlanet(entry) {
   cameraTransitioning = true;
   playCelestialAudio(entry.name);
 
-  // Camera distance: scale with planet visual size (rings on Saturn need more room)
   cameraDistance = Math.max(3, entry.size * 12);
 
-  // Get planet world position right now
   const wPos = new THREE.Vector3();
   entry.mesh.getWorldPosition(wPos);
 
-  // Compute spherical angles so camera starts from current viewing direction
   const rel = camera.position.clone().sub(wPos);
   const relLen = rel.length();
   currentRotationY = Math.atan2(rel.x, rel.z);
@@ -1755,7 +1648,6 @@ function setup360OrbitControls() {
   window.addEventListener('mouseup', (e) => {
     const dx = Math.abs(e.clientX - mouseDownPos.x);
     const dy = Math.abs(e.clientY - mouseDownPos.y);
-    // Flag drag so the subsequent click event can ignore it
     window._wasDragging = (dx >= 5 || dy >= 5);
     isMouseDown = false;
     document.body.style.cursor = 'default';
@@ -1784,64 +1676,123 @@ function setup360OrbitControls() {
   window.addEventListener('touchend', () => { isMouseDown = false; });
 }
 
-function addCommentSprite(name, text, index) {
-  const canvas = createMessengerBubbleCanvas(name, text);
+// ─── Comment Queue System ────────────────────────────────────────────────────
+// Shows one comment at a time: appears at outer orbit, spirals into black hole, disappears
+let commentQueue = [];
+let activeCommentIndex = -1;
+let activeCommentNode = null;
+let commentLifeTimer = 0;
+const COMMENT_DURATION = 15; // seconds per comment
+const BH_RADIUS = 11; // event horizon visual radius (~7.8 * 1.45)
+const ORBIT_START_RADIUS = BH_RADIUS + 16;
+
+function buildCommentQueue() {
+  commentQueue = initialComments.map((c, i) => ({ ...c, index: i }));
+}
+
+function startNextComment() {
+  if (commentQueue.length === 0) return;
+
+  // Remove previous sprite
+  if (activeCommentNode && activeCommentNode.sprite) {
+    scene.remove(activeCommentNode.sprite);
+    activeCommentNode.sprite.material.map.dispose();
+    activeCommentNode.sprite.material.dispose();
+  }
+
+  activeCommentIndex = (activeCommentIndex + 1) % commentQueue.length;
+  const entry = commentQueue[activeCommentIndex];
+
+  const canvas = createMessengerBubbleCanvas(entry.name, entry.text);
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
 
   const material = new THREE.SpriteMaterial({ 
     map: texture, 
     transparent: true,
-    opacity: 0.95
+    opacity: 1.0
   });
 
   const sprite = new THREE.Sprite(material);
-
-  // Scale sprite proportionally so multi-line text fits
   const canvasAspect = canvas.width / canvas.height;
   sprite.scale.set(canvasAspect * 3.2, 3.2, 1);
 
-  const total = initialComments.length;
-  const radius = 42;
-  const initialAngle = (index / total) * Math.PI * 2;
-
-  const node = {
-    sprite: sprite,
-    angle: initialAngle,
-    a: radius,
-    b: radius,
-    tilt: 0,
-    orbitSpeed: 0.0005 + Math.random() * 0.0003
-  };
+  const startAngle = Math.random() * Math.PI * 2;
+  sprite.position.set(
+    Math.cos(startAngle) * ORBIT_START_RADIUS,
+    Math.sin(startAngle) * 3,
+    Math.sin(startAngle) * ORBIT_START_RADIUS
+  );
 
   scene.add(sprite);
-  commentSprites.push(node);
+
+  activeCommentNode = {
+    sprite,
+    angle: startAngle,
+    startRadius: ORBIT_START_RADIUS,
+    orbitTilt: (Math.random() - 0.5) * 0.6
+  };
+
+  commentLifeTimer = 0;
   updateCommentCountDisplay();
 }
 
 function updateCommentCountDisplay() {
   const countElem = document.getElementById('comment-count');
   if (countElem) {
-    countElem.innerText = `${commentSprites.length} lời nhắn đang quay quanh Hố Đen`;
+    const total = initialComments.length;
+    countElem.innerText = `✨ ${total} lời nhắn đang bay vào Hố Đen`;
   }
 }
 
-// 5. Render Loop with Ultra Fast 1000 RPM Pulsar Wobble & Spin Logic
+function updateActiveComment(deltaTime) {
+  if (!activeCommentNode) return;
+
+  commentLifeTimer += deltaTime;
+  const progress = Math.min(commentLifeTimer / COMMENT_DURATION, 1);
+
+  // Spiral: radius shrinks from startRadius → 0, angle rotates faster
+  const currentRadius = activeCommentNode.startRadius * (1 - progress);
+  const angle = activeCommentNode.angle + progress * Math.PI * 4;
+
+  const x = Math.cos(angle) * currentRadius;
+  const z = Math.sin(angle) * currentRadius;
+  const y = Math.sin(angle * 2) * (2 + activeCommentNode.orbitTilt * 4) * (1 - progress * 0.7);
+
+  activeCommentNode.sprite.position.x = x;
+  activeCommentNode.sprite.position.y = y;
+  activeCommentNode.sprite.position.z = z;
+
+  // Scale down as it approaches the black hole
+  const scaleFactor = 0.3 + 0.7 * (1 - progress);
+  const baseW = activeCommentNode.sprite.scale.x;
+  const baseH = activeCommentNode.sprite.scale.y;
+  activeCommentNode.sprite.scale.set(baseW * scaleFactor, baseH * scaleFactor, 1);
+
+  // Fade out near the end
+  if (progress > 0.7) {
+    const fadeOut = 1 - (progress - 0.7) / 0.3;
+    activeCommentNode.sprite.material.opacity = Math.max(0, fadeOut);
+  }
+
+  if (progress >= 1) {
+    startNextComment();
+  }
+}
+
+// 5. Render Loop
 function animate() {
   requestAnimationFrame(animate);
 
   const time = Date.now() * 0.001;
 
-  // Smooth rotation lerp
   currentRotationX += (targetRotationX - currentRotationX) * 0.06;
   currentRotationY += (targetRotationY - currentRotationY) * 0.06;
 
-  // Compute orbit center based on focus
   let orbitCenter = new THREE.Vector3(0, 0, 0);
   if (cameraFocusTarget === FOCUS_NEUTRON && neutronGroup) {
     orbitCenter.copy(neutronGroup.position);
   } else if (cameraFocusTarget === FOCUS_PLANET && focusedPlanetEntry) {
-    // Track the planet's live world position (it keeps moving along its orbit)
     focusedPlanetEntry.mesh.getWorldPosition(orbitCenter);
   } else if (cameraFocusTarget === FOCUS_GALAXY && focusedGalaxyEntry) {
     orbitCenter.copy(focusedGalaxyEntry.group.position);
@@ -1849,7 +1800,6 @@ function animate() {
     orbitCenter.copy(solarSystemGroup.position);
   }
 
-  // Camera orbit position
   const orbitX = cameraDistance * Math.sin(currentRotationY) * Math.cos(currentRotationX);
   const orbitY = cameraDistance * Math.sin(currentRotationX);
   const orbitZ = cameraDistance * Math.cos(currentRotationY) * Math.cos(currentRotationX);
@@ -1860,7 +1810,6 @@ function animate() {
     orbitCenter.z + orbitZ
   );
 
-  // Smooth camera transition
   camera.position.lerp(desiredPos, 0.07);
   camera.lookAt(orbitCenter);
 
@@ -1883,7 +1832,6 @@ function animate() {
     });
   }
 
-  // Ultra-Fast 1000 rev/sec Pulsar Neutron Star Physics Animation
   if (neutronGroup) {
     neutronGroup.rotation.y += 0.8;
     neutronGroup.rotation.x = Math.sin(time * 25) * 0.45;
@@ -1894,28 +1842,13 @@ function animate() {
       neutronAura.scale.set(pulseScale, pulseScale, pulseScale);
     }
 
-    // Update jet particles every frame
     updateJetParticles();
   }
 
-  // Solar system orbital mechanics
   updateSolarSystem(time);
 
-  // Ellipse Orbits for Comment Sprites
-  commentSprites.forEach((node) => {
-    node.angle += node.orbitSpeed;
-
-    const x = Math.cos(node.angle) * node.a;
-    const z = Math.sin(node.angle) * node.b;
-    const y = Math.sin(node.angle) * (node.b * 0.35) + (x * node.tilt * 0.2);
-
-    node.sprite.position.x = x;
-    node.sprite.position.y = y;
-    node.sprite.position.z = z;
-
-    const depthFactor = (z + 30) / 60;
-    node.sprite.material.opacity = Math.max(0.7, Math.min(0.98, depthFactor));
-  });
+  // Update the spiraling comment animation
+  updateActiveComment(0.016);
 
   renderer.render(scene, camera);
 }
@@ -1945,10 +1878,14 @@ async function handleCommentSubmit(event) {
 
   if (name && text) {
     const savedComment = await saveCommentToDatabase({ name, text });
-    addCommentSprite(savedComment?.name || name, savedComment?.text || text, commentSprites.length);
+    // Add to queue
+    const newComment = { name: savedComment?.name || name, text: savedComment?.text || text, index: commentQueue.length };
+    commentQueue.push(newComment);
+    initialComments.push(newComment);
     nameInput.value = '';
     msgInput.value = '';
     updatePreview();
+    updateCommentCountDisplay();
 
     showToast(savedComment
       ? `Bình luận của ${name} đã được lưu vào quỹ đạo Hố Đen!`
