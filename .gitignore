@@ -13,6 +13,7 @@ node_modules/
 *.log
 venv/
 /.vercel
+poetry.lock
 .env
 .env.*
 !.env.example

@@ -7,6 +7,14 @@ import requests
 
 app = Flask(__name__)
 
+
+@app.errorhandler(Exception)
+def handle_unexpected_error(exc):
+    import traceback
+    traceback.print_exc()
+    return jsonify({'error': 'Internal server error', 'detail': str(exc)}), 500
+
+
 # On Vercel the function filesystem is read-only except for /tmp.
 # Fall back to a local uploads dir in development, but never crash at import.
 UPLOADS_DIR = os.environ.get('VERCEL') and '/tmp/uploads' or os.path.join(os.path.dirname(__file__), '..', 'uploads')
@@ -29,17 +37,20 @@ def parse_env_file(env_path):
     if not os.path.exists(env_path):
         return {}
     parsed = {}
-    with open(env_path, encoding='utf-8') as handle:
-        for line in handle.read().splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#') or '=' not in stripped:
-                continue
-            key, value = stripped.split('=', 1)
-            key = key.strip()
-            value = value.strip()
-            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                value = value[1:-1]
-            parsed[key] = value
+    try:
+        with open(env_path, encoding='utf-8') as handle:
+            for line in handle.read().splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith('#') or '=' not in stripped:
+                    continue
+                key, value = stripped.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                parsed[key] = value
+    except OSError:
+        return {}
     return parsed
 
 

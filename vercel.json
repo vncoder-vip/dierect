@@ -3,9 +3,5 @@
     "api/comments.py": {
       "maxDuration": 30
     }
-  },
-  "rewrites": [
-    { "source": "/api/comments", "destination": "/api/comments" },
-    { "source": "/api/comments/(.*)", "destination": "/api/comments" }
-  ]
+  }
 }
