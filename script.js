@@ -42,6 +42,7 @@ async function loadRemoteComments() {
         .map((comment) => ({
           name: String(comment?.name || '').trim().slice(0, 24),
           text: String(comment?.text || '').trim().slice(0, 120),
+          created_at: String(comment?.created_at || comment?.createdAt || '').trim(),
           storage_label: String(comment?.storage_label || (comment?.storage_id ? `Sanity #${comment.storage_id}` : '')).trim()
         }))
         .filter((comment) => comment.name && comment.text)
@@ -1405,16 +1406,21 @@ async function initThree() {
   createDistantNeutronStar();
   createSolarSystem();
   buildCommentQueue();
-  setTimeout(startNextComment, 1000);
+  const commentStartTimer = setTimeout(() => {
+    if (!activeCommentNode) startNextComment();
+  }, 1000);
 
   // Do not hold WebGL setup, controls, or the first render hostage to a
   // serverless/API request. Comments are merged when the request completes.
   loadRemoteComments().then((remoteComments) => {
     if (!remoteComments.length) return;
-    const hadComments = commentQueue.length > 0;
-    initialComments.push(...remoteComments.slice(-12));
+    // The API returns newest-first. Keep that order and place remote comments
+    // before local fallback comments in the black-hole display queue.
+    initialComments.unshift(...remoteComments.slice(0, 12));
     buildCommentQueue();
-    if (!hadComments) startNextComment();
+    activeCommentIndex = -1;
+    clearTimeout(commentStartTimer);
+    startNextComment();
   });
 
   currentRotationX = 0.52;
@@ -2008,8 +2014,13 @@ async function handleCommentSubmit(event) {
       media_url: savedComment?.media_url || (mediaType === 'image' || mediaType === 'video' ? mediaUrl : ''),
       index: commentQueue.length
     };
-    commentQueue.push(newComment);
-    initialComments.push(newComment);
+    // A just-submitted comment is the newest item and should appear first.
+    initialComments.unshift(newComment);
+    buildCommentQueue();
+    activeCommentIndex = -1;
+    if (typeof scene !== 'undefined' && scene && typeof THREE !== 'undefined') {
+      startNextComment();
+    }
     nameInput.value = '';
     msgInput.value = '';
     mediaUrlInput.value = '';
