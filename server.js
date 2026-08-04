@@ -7,8 +7,9 @@ const PORT = Number(process.env.PORT || 10000);
 const ROOT = __dirname;
 const UPLOADS_DIR = path.join(ROOT, 'uploads');
 const MAX_BODY_BYTES = 16 * 1024;
-const DEFAULT_SANITY_API_VERSION = '2026-07-28';
+const DEFAULT_SANITY_API_VERSION = '2024-03-19';
 const DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000;
+const SANITY_API_VERSION_CANDIDATES = ['2024-03-19', '2023-11-21', '2025-03-19', '2026-07-28'];
 
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -47,7 +48,7 @@ function loadEnvFile(envFilePath = path.join(ROOT, '.env')) {
   if (!fs.existsSync(envFilePath)) return {};
   const parsed = parseEnvContent(fs.readFileSync(envFilePath, 'utf8'));
   for (const [key, value] of Object.entries(parsed)) {
-    if (!process.env[key]) process.env[key] = value;
+    process.env[key] = value;
   }
   return parsed;
 }
@@ -56,6 +57,12 @@ loadEnvFile();
 
 if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
+
+function normalizeSanityApiVersion(apiVersion) {
+  const value = String(apiVersion || '').trim();
+  if (!value) return DEFAULT_SANITY_API_VERSION;
+  return value.replace(/^v/i, '');
 }
 
 function getEnvValue(name, fallback = '') {
@@ -107,43 +114,58 @@ function getMaxCommentsPerStorage() {
   return Math.max(1, getEnvNumber('SANITY_MAX_COMMENTS_PER_PROJECT', DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT));
 }
 
-function buildSanityUrl(storage, endpoint) {
-  return `https://${storage.projectId}.api.sanity.io/v${storage.apiVersion}${endpoint}`;
+function buildSanityUrl(storage, endpoint, apiVersion) {
+  const version = normalizeSanityApiVersion(apiVersion || storage.apiVersion || DEFAULT_SANITY_API_VERSION);
+  return `https://${storage.projectId}.api.sanity.io/v${version}${endpoint}`;
 }
 
 async function sanityRequest(storage, endpoint, options = {}) {
-  const url = buildSanityUrl(storage, endpoint);
-  const headers = {
-    Authorization: `Bearer ${storage.token}`,
-    'Content-Type': 'application/json'
-  };
-  const init = {
-    method: options.method || 'GET',
-    headers
-  };
-  if (options.body !== undefined) {
-    init.body = JSON.stringify(options.body);
-  }
+  const candidates = [normalizeSanityApiVersion(storage.apiVersion || DEFAULT_SANITY_API_VERSION), ...SANITY_API_VERSION_CANDIDATES];
+  const uniqueVersions = [...new Set(candidates.filter(Boolean))];
+  let lastError = null;
 
-  const response = await fetch(url, init);
-  const text = await response.text();
-  let payload = null;
-  if (text) {
+  for (const version of uniqueVersions) {
+    const url = buildSanityUrl(storage, endpoint, version);
+    const headers = {
+      Authorization: `Bearer ${storage.token}`,
+      'Content-Type': 'application/json'
+    };
+    const init = {
+      method: options.method || 'GET',
+      headers
+    };
+    if (options.body !== undefined) {
+      init.body = JSON.stringify(options.body);
+    }
+
     try {
-      payload = JSON.parse(text);
-    } catch {
-      payload = text;
+      const response = await fetch(url, init);
+      const text = await response.text();
+      let payload = null;
+      if (text) {
+        try {
+          payload = JSON.parse(text);
+        } catch {
+          payload = text;
+        }
+      }
+
+      if (!response.ok) {
+        lastError = new Error(`Sanity request failed with status ${response.status} at ${url}`);
+        lastError.statusCode = response.status;
+        lastError.details = payload;
+        continue;
+      }
+
+      return payload;
+    } catch (error) {
+      lastError = error;
     }
   }
 
-  if (!response.ok) {
-    const error = new Error(`Sanity request failed with status ${response.status}`);
-    error.statusCode = response.status;
-    error.details = payload;
-    throw error;
-  }
-
-  return payload;
+  const finalError = lastError || new Error('Sanity request failed');
+  finalError.statusCode = finalError.statusCode || 502;
+  throw finalError;
 }
 
 async function getCommentCount(storage) {

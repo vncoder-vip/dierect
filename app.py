@@ -11,8 +11,9 @@ PORT = int(os.environ.get('PORT', 10000))
 ROOT = os.path.abspath(os.path.dirname(__file__))
 UPLOADS_DIR = os.path.join(ROOT, 'uploads')
 MAX_BODY_BYTES = 16 * 1024
-DEFAULT_SANITY_API_VERSION = '2026-07-28'
+DEFAULT_SANITY_API_VERSION = '2024-03-19'
 DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000
+SANITY_API_VERSION_CANDIDATES = ['2024-03-19', '2023-11-21', '2025-03-19', '2026-07-28']
 
 
 def parse_env_file(env_path):
@@ -36,7 +37,7 @@ def parse_env_file(env_path):
 def load_env():
     env_path = os.path.join(ROOT, '.env')
     for key, value in parse_env_file(env_path).items():
-        os.environ.setdefault(key, value)
+        os.environ[key] = value
 
 
 load_env()
@@ -106,6 +107,13 @@ def save_uploaded_media(uploaded_file):
     return {'media_type': media_type, 'media_url': rel_path}
 
 
+def normalize_sanity_api_version(api_version):
+    value = str(api_version or '').strip()
+    if not value:
+        return DEFAULT_SANITY_API_VERSION
+    return value.lstrip('v')
+
+
 def get_env_value(name, fallback=''):
     return os.environ.get(name, fallback)
 
@@ -150,15 +158,27 @@ def get_max_comments_per_storage():
 
 
 def sanity_request(storage, endpoint, method='GET', json_body=None):
-    url = f"https://{storage['projectId']}.api.sanity.io/v{storage['apiVersion']}{endpoint}"
-    headers = {'Authorization': f"Bearer {storage['token']}", 'Content-Type': 'application/json'}
-    response = requests.request(method, url, headers=headers, json=json_body, timeout=10)
-    if not response.ok:
-        raise RuntimeError(f'Sanity request failed with status {response.status_code}')
-    try:
-        return response.json()
-    except ValueError:
-        return {}
+    versions = [normalize_sanity_api_version(storage.get('apiVersion') or DEFAULT_SANITY_API_VERSION)]
+    versions.extend(SANITY_API_VERSION_CANDIDATES)
+    versions = list(dict.fromkeys(v for v in versions if v))
+    last_exc = None
+    for version in versions:
+        url = f"https://{storage['projectId']}.api.sanity.io/v{version}{endpoint}"
+        headers = {'Authorization': f"Bearer {storage['token']}", 'Content-Type': 'application/json'}
+        try:
+            response = requests.request(method, url, headers=headers, json=json_body, timeout=10)
+            if not response.ok:
+                last_exc = RuntimeError(f'Sanity request failed with status {response.status_code} at {url}')
+                continue
+            try:
+                return response.json()
+            except ValueError:
+                return {}
+        except Exception as exc:
+            last_exc = exc
+    if last_exc:
+        raise last_exc
+    raise RuntimeError('Sanity request failed')
 
 
 def get_comment_count(storage):
