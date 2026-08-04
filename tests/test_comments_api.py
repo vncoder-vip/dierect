@@ -71,3 +71,10 @@ def test_api_keeps_comments_when_one_sanity_storage_fails(monkeypatch):
     assert len(comments) == 1
     assert comments[0]['storage_id'] == 'primary'
     assert comments[0]['storage_label'] == 'Sanity #primary'
+
+
+def test_full_flask_entrypoint_can_import_and_serve_root():
+    module = importlib.import_module('app')
+    response = module.app.test_client().get('/')
+
+    assert response.status_code == 200

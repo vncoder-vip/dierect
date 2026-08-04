@@ -1,36 +1,44 @@
 import os
 import json
 import urllib.parse as urlparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Flask, request, jsonify, send_from_directory, abort
 import datetime
 import requests
 
 app = Flask(__name__, static_folder='.', static_url_path='')
 
-PORT = int(os.environ.get('PORT', 10000))
+try:
+    PORT = int(os.environ.get('PORT') or 10000)
+except (TypeError, ValueError):
+    PORT = 10000
 ROOT = os.path.abspath(os.path.dirname(__file__))
 UPLOADS_DIR = os.path.join(ROOT, 'uploads')
 MAX_BODY_BYTES = 16 * 1024
 DEFAULT_SANITY_API_VERSION = '2024-03-19'
 DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000
 SANITY_API_VERSION_CANDIDATES = ['2024-03-19', '2023-11-21', '2025-03-19', '2026-07-28']
+DEFAULT_SANITY_TIMEOUT_SECONDS = 8
 
 
 def parse_env_file(env_path):
     if not os.path.exists(env_path):
         return {}
     parsed = {}
-    with open(env_path, encoding='utf-8') as handle:
-        for line in handle.read().splitlines():
-            stripped = line.strip()
-            if not stripped or stripped.startswith('#') or '=' not in stripped:
-                continue
-            key, value = stripped.split('=', 1)
-            key = key.strip()
-            value = value.strip()
-            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                value = value[1:-1]
-            parsed[key] = value
+    try:
+        with open(env_path, encoding='utf-8') as handle:
+            for line in handle.read().splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith('#') or '=' not in stripped:
+                    continue
+                key, value = stripped.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                parsed[key] = value
+    except OSError:
+        return {}
     return parsed
 
 
@@ -42,7 +50,17 @@ def load_env():
 
 load_env()
 
-os.makedirs(UPLOADS_DIR, exist_ok=True)
+# Vercel's deployed filesystem is read-only. Keep local uploads when possible,
+# but never fail the whole Flask import if the deployment directory is not
+# writable; /tmp is the only writable location in a serverless function.
+try:
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+except OSError:
+    UPLOADS_DIR = '/tmp/uploads'
+    try:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+    except OSError:
+        UPLOADS_DIR = None
 
 # Optional Postgres setup
 DATABASE_URL = os.environ.get('DATABASE_URL')
@@ -97,6 +115,8 @@ def normalise_comment(input_data):
 def save_uploaded_media(uploaded_file):
     if not uploaded_file or not uploaded_file.filename:
         return None
+    if not UPLOADS_DIR:
+        return None
     filename = os.path.basename(uploaded_file.filename)
     safe_name = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '-' for ch in filename)
     safe_name = safe_name.strip('-.') or 'upload'
@@ -115,7 +135,13 @@ def normalize_sanity_api_version(api_version):
 
 
 def get_env_value(name, fallback=''):
-    return os.environ.get(name, fallback)
+    value = os.environ.get(name)
+    if value is None:
+        return fallback
+    value = str(value).strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        value = value[1:-1].strip()
+    return value or fallback
 
 
 def get_env_number(name, fallback):
@@ -124,6 +150,10 @@ def get_env_number(name, fallback):
     except (TypeError, ValueError):
         value = fallback
     return value
+
+
+def get_sanity_timeout_seconds():
+    return max(1, min(15, get_env_number('SANITY_TIMEOUT_SECONDS', DEFAULT_SANITY_TIMEOUT_SECONDS)))
 
 
 def get_configured_sanity_storages():
@@ -166,9 +196,17 @@ def sanity_request(storage, endpoint, method='GET', json_body=None):
         url = f"https://{storage['projectId']}.api.sanity.io/v{version}{endpoint}"
         headers = {'Authorization': f"Bearer {storage['token']}", 'Content-Type': 'application/json'}
         try:
-            response = requests.request(method, url, headers=headers, json=json_body, timeout=10)
+            response = requests.request(
+                method,
+                url,
+                headers=headers,
+                json=json_body,
+                timeout=(3, get_sanity_timeout_seconds())
+            )
             if not response.ok:
                 last_exc = RuntimeError(f'Sanity request failed with status {response.status_code} at {url}')
+                if response.status_code != 404:
+                    break
                 continue
             try:
                 return response.json()
@@ -184,20 +222,22 @@ def sanity_request(storage, endpoint, method='GET', json_body=None):
 def get_comment_count(storage):
     query = 'count(*[_type == "comment"])'
     result = sanity_request(storage, f"/data/query/{urlparse.quote(storage['dataset'])}?query={urlparse.quote(query)}")
-    return int(result.get('result', 0) or 0)
+    return int(result.get('result', 0) or 0) if isinstance(result, dict) else 0
 
 
 def get_comments_from_storage(storage):
     groq = '*[_type == "comment"] | order(createdAt asc)[0...100]{_id, name, text, createdAt}'
     result = sanity_request(storage, f"/data/query/{urlparse.quote(storage['dataset'])}?query={urlparse.quote(groq)}")
-    comments = result.get('result', [])
+    comments = result.get('result', []) if isinstance(result, dict) else []
+    if not isinstance(comments, list):
+        return []
     return [{
         'id': comment.get('_id'),
         'name': comment.get('name'),
         'text': comment.get('text'),
         'created_at': comment.get('createdAt'),
         'storage_id': storage['id']
-    } for comment in comments]
+    } for comment in comments if isinstance(comment, dict)]
 
 
 def create_comment_in_storage(storage, comment):
@@ -212,10 +252,15 @@ def create_comment_in_storage(storage, comment):
         }]
     }
     result = sanity_request(storage, f"/data/mutate/{urlparse.quote(storage['dataset'])}?returnIds=true", method='POST', json_body=payload)
-    ids = result.get('result', [])
+    ids = result.get('result', []) if isinstance(result, dict) else []
+    if not isinstance(ids, list):
+        ids = []
     created_at = payload['mutations'][0]['create']['createdAt']
+    first_id = ids[0] if ids else None
+    if isinstance(first_id, dict):
+        first_id = first_id.get('_id')
     return {
-        'id': ids[0].get('_id') if ids else None,
+        'id': first_id,
         'name': comment['name'],
         'text': comment['text'],
         'created_at': created_at,
@@ -244,15 +289,23 @@ def persist_comment_with_storage_manager(comment):
 
 def list_comments_from_storage_manager():
     all_comments = []
-    for storage in get_configured_sanity_storages():
-        try:
-            comments = get_comments_from_storage(storage)
-            for comment in comments:
-                comment['storage_id'] = storage['id']
-                comment['storage_label'] = f"Sanity #{storage['id']}"
-                all_comments.append(comment)
-        except Exception as exc:
-            print(f'Unable to read from Sanity storage {storage["id"]}: {exc}')
+    storages = get_configured_sanity_storages()
+    if not storages:
+        return []
+
+    max_workers = min(8, len(storages))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(get_comments_from_storage, storage): storage for storage in storages}
+        for future in as_completed(futures):
+            storage = futures[future]
+            try:
+                comments = future.result()
+                for comment in comments:
+                    comment['storage_id'] = storage['id']
+                    comment['storage_label'] = f"Sanity #{storage['id']}"
+                    all_comments.append(comment)
+            except Exception as exc:
+                print(f'Unable to read from Sanity storage {storage["id"]}: {exc}')
     return sorted(all_comments, key=lambda item: item.get('created_at') or '', reverse=True)[:100]
 
 
