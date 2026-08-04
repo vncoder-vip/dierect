@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
+application = app  # Vercel Python runtime expects WSGI app named 'application'
 
 
 @app.errorhandler(Exception)
