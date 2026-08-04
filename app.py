@@ -327,7 +327,6 @@ def get_comments_from_configured_backends():
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute('SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
             rows = cur.fetchall()
-        rows.reverse()
         return rows
     finally:
         pool.putconn(conn)
@@ -374,7 +373,6 @@ def comments_postgres():
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute('SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
                 rows = cur.fetchall()
-            rows.reverse()
             return jsonify(rows), 200
         finally:
             pool.putconn(conn)

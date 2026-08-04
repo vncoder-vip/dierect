@@ -37,16 +37,22 @@ async function loadRemoteComments() {
     });
     if (!response.ok) return [];
     const comments = await response.json();
-    return Array.isArray(comments)
-      ? comments
-        .map((comment) => ({
-          name: String(comment?.name || '').trim().slice(0, 24),
-          text: String(comment?.text || '').trim().slice(0, 120),
-          created_at: String(comment?.created_at || comment?.createdAt || '').trim(),
-          storage_label: String(comment?.storage_label || (comment?.storage_id ? `Sanity #${comment.storage_id}` : '')).trim()
-        }))
-        .filter((comment) => comment.name && comment.text)
-      : [];
+    if (!Array.isArray(comments)) return [];
+
+    return comments
+      .map((comment) => ({
+        name: String(comment?.name || '').trim().slice(0, 24),
+        text: String(comment?.text || '').trim().slice(0, 120),
+        created_at: String(comment?.created_at || comment?.createdAt || '').trim(),
+        storage_label: String(comment?.storage_label || (comment?.storage_id ? `Sanity #${comment.storage_id}` : '')).trim()
+      }))
+      .filter((comment) => comment.name && comment.text)
+      .sort((newer, older) => {
+        const newerTime = Date.parse(newer.created_at);
+        const olderTime = Date.parse(older.created_at);
+        if (!Number.isFinite(newerTime) || !Number.isFinite(olderTime)) return 0;
+        return olderTime - newerTime;
+      });
   } catch {
     return [];
   } finally {
