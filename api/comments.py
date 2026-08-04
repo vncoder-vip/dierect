@@ -7,8 +7,18 @@ import requests
 
 app = Flask(__name__)
 
-UPLOADS_DIR = os.path.join(os.path.dirname(__file__), '..', 'uploads')
-os.makedirs(UPLOADS_DIR, exist_ok=True)
+# On Vercel the function filesystem is read-only except for /tmp.
+# Fall back to a local uploads dir in development, but never crash at import.
+UPLOADS_DIR = os.environ.get('VERCEL') and '/tmp/uploads' or os.path.join(os.path.dirname(__file__), '..', 'uploads')
+try:
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+except OSError:
+    # Read-only filesystem (e.g. Vercel) — uploads will be disabled gracefully.
+    UPLOADS_DIR = '/tmp/uploads'
+    try:
+        os.makedirs(UPLOADS_DIR, exist_ok=True)
+    except OSError:
+        UPLOADS_DIR = None
 MAX_BODY_BYTES = 16 * 1024
 DEFAULT_SANITY_API_VERSION = '2024-03-19'
 DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000
@@ -71,11 +81,17 @@ def normalise_comment(input_data):
 def save_uploaded_media(uploaded_file):
     if not uploaded_file or not uploaded_file.filename:
         return None
+    if not UPLOADS_DIR:
+        # Filesystem is read-only (e.g. Vercel) — media uploads are unavailable.
+        return None
     filename = os.path.basename(uploaded_file.filename)
     safe_name = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '-' for ch in filename)
     safe_name = safe_name.strip('-.') or 'upload'
     target_path = os.path.join(UPLOADS_DIR, f"{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{safe_name}")
-    uploaded_file.save(target_path)
+    try:
+        uploaded_file.save(target_path)
+    except OSError:
+        return None
     rel_path = f"/uploads/{os.path.basename(target_path)}"
     media_type = 'image' if uploaded_file.mimetype and uploaded_file.mimetype.startswith('image/') else 'video' if uploaded_file.mimetype and uploaded_file.mimetype.startswith('video/') else ''
     return {'media_type': media_type, 'media_url': rel_path}
@@ -225,6 +241,13 @@ def get_comments_from_configured_backends():
     if storages:
         try:
             comments = list_comments_from_storage_manager()
+            # Ensure every comment carries storage metadata for the frontend.
+            default_storage_id = storages[0]['id'] if storages else ''
+            for comment in comments:
+                if not comment.get('storage_id'):
+                    comment['storage_id'] = default_storage_id
+                if not comment.get('storage_label'):
+                    comment['storage_label'] = f"Sanity #{comment.get('storage_id', '')}"
             return comments
         except Exception as exc:
             print(f'Unable to read comments from Sanity backend: {exc}')
