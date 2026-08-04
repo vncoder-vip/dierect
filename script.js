@@ -57,6 +57,16 @@ async function saveCommentToDatabase(comment) {
   }
 }
 
+function sanitizeMediaPreview(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    return parsed.href;
+  } catch {
+    return '';
+  }
+}
+
 // Three.js Engine Variables
 let scene, camera, renderer;
 let commentSprites = [];
@@ -1885,28 +1895,63 @@ function onWindowResize() {
 function updatePreview() {
   const nameVal = document.getElementById('user-name').value.trim();
   const msgVal = document.getElementById('user-msg').value.trim();
+  const mediaUrl = sanitizeMediaPreview(document.getElementById('media-url').value.trim());
+  const mediaType = document.getElementById('media-type').value;
+  const previewText = document.getElementById('text-preview');
+  const previewBox = document.querySelector('.msg-bubble-preview');
 
   document.getElementById('name-preview').innerText = nameVal || 'Minh Anh';
-  document.getElementById('text-preview').innerText = msgVal || 'Chuột Chat đỉnh cao ghê! 🚀';
+  previewText.innerText = msgVal || 'Chuột Chat đỉnh cao ghê! 🚀';
   document.getElementById('avatar-preview').innerText = (nameVal || 'M').charAt(0).toUpperCase();
+
+  if (mediaUrl && mediaType === 'image') {
+    previewText.innerHTML = `${previewText.innerText}<br><img src="${mediaUrl}" alt="preview" style="max-width:100%;margin-top:8px;border-radius:10px;" />`;
+  } else if (mediaUrl && mediaType === 'video') {
+    previewText.innerHTML = `${previewText.innerText}<br><video controls src="${mediaUrl}" style="max-width:100%;margin-top:8px;border-radius:10px;"></video>`;
+  }
+
+  if (!mediaUrl) {
+    previewText.innerHTML = previewText.innerText;
+  }
+
+  if (previewBox) {
+    previewBox.style.minHeight = mediaUrl ? '220px' : 'auto';
+  }
 }
 
 async function handleCommentSubmit(event) {
   event.preventDefault();
   const nameInput = document.getElementById('user-name');
   const msgInput = document.getElementById('user-msg');
+  const mediaUrlInput = document.getElementById('media-url');
+  const mediaTypeInput = document.getElementById('media-type');
 
   const name = nameInput.value.trim();
   const text = msgInput.value.trim();
+  const mediaUrl = mediaUrlInput.value.trim();
+  const mediaType = mediaTypeInput.value;
 
   if (name && text) {
-    const savedComment = await saveCommentToDatabase({ name, text });
-    // Add to queue
-    const newComment = { name: savedComment?.name || name, text: savedComment?.text || text, index: commentQueue.length };
+    const payload = {
+      name,
+      text,
+      media_type: mediaType || '',
+      media_url: mediaType === 'image' || mediaType === 'video' ? mediaUrl : ''
+    };
+    const savedComment = await saveCommentToDatabase(payload);
+    const newComment = {
+      name: savedComment?.name || name,
+      text: savedComment?.text || text,
+      media_type: savedComment?.media_type || payload.media_type,
+      media_url: savedComment?.media_url || payload.media_url,
+      index: commentQueue.length
+    };
     commentQueue.push(newComment);
     initialComments.push(newComment);
     nameInput.value = '';
     msgInput.value = '';
+    mediaUrlInput.value = '';
+    mediaTypeInput.value = '';
     updatePreview();
     updateCommentCountDisplay();
 

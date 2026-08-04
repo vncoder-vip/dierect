@@ -54,7 +54,15 @@ if DATABASE_URL:
 def normalise_comment(input_data):
     name = str((input_data.get('name') if isinstance(input_data, dict) else '') or '').strip()[:24]
     text = str((input_data.get('text') if isinstance(input_data, dict) else '') or '').strip()[:120]
-    return {'name': name, 'text': text} if name and text else None
+    media_type = str((input_data.get('media_type') if isinstance(input_data, dict) else '') or '').strip().lower()
+    media_url = str((input_data.get('media_url') if isinstance(input_data, dict) else '') or '').strip()
+    if not name or not text:
+        return None
+    if media_type not in {'image', 'video'}:
+        media_type = ''
+    if not media_type:
+        media_url = ''
+    return {'name': name, 'text': text, 'media_type': media_type, 'media_url': media_url}
 
 
 def get_env_value(name, fallback=''):
@@ -185,7 +193,7 @@ def comments_postgres():
         conn = pool.getconn()
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute('SELECT id, name, text, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
+                cur.execute('SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
                 rows = cur.fetchall()
             rows.reverse()
             return jsonify(rows), 200
@@ -208,8 +216,8 @@ def comments_postgres():
         try:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute(
-                    'INSERT INTO comments (name, text) VALUES (%s, %s) RETURNING id, name, text, created_at',
-                    (comment['name'], comment['text'])
+                    'INSERT INTO comments (name, text, media_type, media_url) VALUES (%s, %s, %s, %s) RETURNING id, name, text, media_type, media_url, created_at',
+                    (comment['name'], comment['text'], comment.get('media_type') or None, comment.get('media_url') or None)
                 )
                 created = cur.fetchone()
                 conn.commit()

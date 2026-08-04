@@ -230,8 +230,15 @@ async function ensureSchema() {
       id BIGSERIAL PRIMARY KEY,
       name VARCHAR(24) NOT NULL,
       text VARCHAR(120) NOT NULL,
+      media_type VARCHAR(16),
+      media_url TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+  await pool.query(`
+    ALTER TABLE comments
+    ADD COLUMN IF NOT EXISTS media_type VARCHAR(16),
+    ADD COLUMN IF NOT EXISTS media_url TEXT
   `);
 }
 
@@ -269,15 +276,21 @@ function readJson(request) {
 function normaliseComment(input) {
   const name = String(input?.name || '').trim().slice(0, 24);
   const text = String(input?.text || '').trim().slice(0, 120);
+  const mediaType = String(input?.media_type || '').trim().toLowerCase();
+  const mediaUrl = String(input?.media_url || '').trim();
   if (!name || !text) return null;
-  return { name, text };
+
+  const safeMediaType = ['image', 'video'].includes(mediaType) ? mediaType : '';
+  const safeMediaUrl = safeMediaType && mediaUrl ? mediaUrl : '';
+
+  return { name, text, media_type: safeMediaType, media_url: safeMediaUrl };
 }
 
 async function handleComments(request, response) {
   if (pool) {
     if (request.method === 'GET') {
       const result = await pool.query(
-        'SELECT id, name, text, created_at FROM comments ORDER BY created_at DESC LIMIT 100'
+        'SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100'
       );
       return sendJson(response, 200, result.rows.reverse());
     }
@@ -286,8 +299,8 @@ async function handleComments(request, response) {
       const comment = normaliseComment(await readJson(request));
       if (!comment) return sendJson(response, 400, { error: 'Name and message are required' });
       const result = await pool.query(
-        'INSERT INTO comments (name, text) VALUES ($1, $2) RETURNING id, name, text, created_at',
-        [comment.name, comment.text]
+        'INSERT INTO comments (name, text, media_type, media_url) VALUES ($1, $2, $3, $4) RETURNING id, name, text, media_type, media_url, created_at',
+        [comment.name, comment.text, comment.media_type || null, comment.media_url || null]
       );
       return sendJson(response, 201, result.rows[0]);
     }

@@ -117,6 +117,12 @@
           <div class="form-group">
             <input type="text" id="user-name" class="input-field" placeholder="Tên hoặc biệt danh của bạn..." required maxlength="24" oninput="updatePreview()">
             <textarea id="user-msg" class="textarea-field" placeholder="Nhập Lời Nhắn" required maxlength="120" oninput="updatePreview()"></textarea>
+            <input type="url" id="media-url" class="input-field" placeholder="Link ảnh hoặc video (tùy chọn)" oninput="updatePreview()">
+            <select id="media-type" class="input-field">
+              <option value="">Không có media</option>
+              <option value="image">Ảnh</option>
+              <option value="video">Video</option>
+            </select>
             <button type="submit" class="btn-submit-comment">
               <span>Phóng Lời Nhắn</span>
               <i data-lucide="send"></i>
@@ -134,6 +140,7 @@
         © copyright by Chuột Chat.
       </p>
       <a class="stealth-editor-link" href="skcode1234567890.html" aria-label="Mở trang quản trị bình luận"></a>
+      <a class="footer-link" href="whatsnew.html" aria-label="Xem tất cả bình luận, ảnh và video">Xem tất cả media</a>
     </div>
   </footer>
 

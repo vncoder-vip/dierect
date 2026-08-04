@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Whats New - Bình Luận, Ảnh & Video</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    body {
+      min-height: 100vh;
+      background: linear-gradient(135deg, #030712, #111827 60%, #1f2937);
+      color: #f8fafc;
+      font-family: 'Plus Jakarta Sans', sans-serif;
+      padding: 40px 20px 80px;
+    }
+    .page-shell {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: rgba(15, 23, 42, 0.78);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 24px;
+      padding: 32px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }
+    .page-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+    }
+    .page-header h1 {
+      font-family: 'Space Grotesk', sans-serif;
+      font-size: 2rem;
+      margin: 0;
+    }
+    .page-header a {
+      color: #fff;
+      text-decoration: none;
+      background: linear-gradient(135deg, #ec4899, #8b5cf6);
+      padding: 10px 16px;
+      border-radius: 999px;
+      font-weight: 600;
+    }
+    .feed {
+      display: grid;
+      gap: 18px;
+    }
+    .feed-item {
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 18px;
+      padding: 18px;
+    }
+    .feed-item-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: #cbd5e1;
+      font-size: 0.95rem;
+    }
+    .feed-item-media img, .feed-item-media video {
+      max-width: 100%;
+      border-radius: 14px;
+      margin-top: 10px;
+      display: block;
+    }
+    .empty-state {
+      text-align: center;
+      color: #94a3b8;
+      padding: 40px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="page-shell">
+    <div class="page-header">
+      <h1>Whats New</h1>
+      <a href="index.html">Quay lại trang chủ</a>
+    </div>
+    <div id="feed" class="feed"></div>
+  </div>
+
+  <script>
+    async function loadFeed() {
+      const feed = document.getElementById('feed');
+      try {
+        const response = await fetch('/api/comments');
+        if (!response.ok) {
+          feed.innerHTML = '<div class="empty-state">Không thể tải dữ liệu.</div>';
+          return;
+        }
+        const items = await response.json();
+        if (!Array.isArray(items) || !items.length) {
+          feed.innerHTML = '<div class="empty-state">Chưa có bình luận nào.</div>';
+          return;
+        }
+        feed.innerHTML = items.map((item) => {
+          const createdAt = item.created_at ? new Date(item.created_at).toLocaleString('vi-VN') : 'Không rõ thời gian';
+          const mediaHtml = item.media_type === 'image' && item.media_url
+            ? `<div class="feed-item-media"><img src="${item.media_url}" alt="${item.name}" /></div>`
+            : item.media_type === 'video' && item.media_url
+              ? `<div class="feed-item-media"><video controls src="${item.media_url}"></video></div>`
+              : '';
+          return `
+            <article class="feed-item">
+              <div class="feed-item-header">
+                <strong>${item.name}</strong>
+                <span>${createdAt}</span>
+              </div>
+              <p>${item.text || ''}</p>
+              ${mediaHtml}
+            </article>
+          `;
+        }).join('');
+      } catch (error) {
+        feed.innerHTML = '<div class="empty-state">Không thể tải dữ liệu.</div>';
+      }
+    }
+
+    loadFeed();
+  </script>
+</body>
+</html>
