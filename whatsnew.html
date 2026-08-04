@@ -84,6 +84,60 @@
   </div>
 
   <script>
+    const COMMENT_MEDIA_CACHE_KEY = 'directchat-comment-media';
+
+    function escapeHtml(value) {
+      const element = document.createElement('div');
+      element.textContent = String(value || '');
+      return element.innerHTML;
+    }
+
+    function resolveMediaUrl(value) {
+      if (!value) return '';
+      try {
+        const parsed = new URL(String(value), window.location.origin);
+        return ['http:', 'https:', 'blob:', 'data:'].includes(parsed.protocol) ? parsed.href : '';
+      } catch {
+        return '';
+      }
+    }
+
+    function inferMediaType(url) {
+      const cleanUrl = String(url || '').split(/[?#]/, 1)[0].toLowerCase();
+      if (/\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(cleanUrl)) return 'image';
+      if (/\.(mp4|webm|ogg|mov|m4v)$/i.test(cleanUrl)) return 'video';
+      return '';
+    }
+
+    function getMediaInfo(item) {
+      const mediaUrl = resolveMediaUrl(item?.media_url || item?.mediaUrl || '');
+      const explicitType = String(item?.media_type || item?.mediaType || '').trim().toLowerCase();
+      const mediaType = explicitType === 'image' || explicitType === 'video'
+        ? explicitType
+        : inferMediaType(mediaUrl);
+      return { media_type: mediaType, media_url: mediaType && mediaUrl ? mediaUrl : '' };
+    }
+
+    function getMediaCacheKey(item) {
+      const id = String(item?.id || item?._id || '').trim();
+      if (id) return `id:${id}`;
+      const name = String(item?.name || '').trim().toLowerCase();
+      const text = String(item?.text || '').trim().toLowerCase();
+      return name && text ? `content:${name}|${text}` : '';
+    }
+
+    function mergeCachedMedia(item) {
+      const media = getMediaInfo(item);
+      if (media.media_url) return { ...item, ...media };
+      try {
+        const cache = JSON.parse(localStorage.getItem(COMMENT_MEDIA_CACHE_KEY) || '{}');
+        const cached = cache && cache[getMediaCacheKey(item)];
+        return cached ? { ...item, ...getMediaInfo(cached) } : { ...item, ...media };
+      } catch {
+        return { ...item, ...media };
+      }
+    }
+
     async function loadFeed() {
       const feed = document.getElementById('feed');
       try {
@@ -92,25 +146,28 @@
           feed.innerHTML = '<div class="empty-state">Không thể tải dữ liệu.</div>';
           return;
         }
-        const items = await response.json();
+        const rawItems = await response.json();
+        const items = Array.isArray(rawItems) ? rawItems.map(mergeCachedMedia) : [];
         if (!Array.isArray(items) || !items.length) {
           feed.innerHTML = '<div class="empty-state">Chưa có bình luận nào.</div>';
           return;
         }
         feed.innerHTML = items.map((item) => {
           const createdAt = item.created_at ? new Date(item.created_at).toLocaleString('vi-VN') : 'Không rõ thời gian';
-          const mediaHtml = item.media_type === 'image' && item.media_url
-            ? `<div class="feed-item-media"><img src="${item.media_url}" alt="${item.name}" /></div>`
-            : item.media_type === 'video' && item.media_url
-              ? `<div class="feed-item-media"><video controls src="${item.media_url}"></video></div>`
+          const media = getMediaInfo(item);
+          const mediaUrl = escapeHtml(media.media_url);
+          const mediaHtml = media.media_type === 'image' && media.media_url
+            ? `<div class="feed-item-media"><img loading="lazy" src="${mediaUrl}" alt="Ảnh trong bình luận của ${escapeHtml(item.name)}" /></div>`
+            : media.media_type === 'video' && media.media_url
+              ? `<div class="feed-item-media"><video controls playsinline preload="metadata" src="${mediaUrl}"></video></div>`
               : '';
           return `
             <article class="feed-item">
               <div class="feed-item-header">
-                <strong>${item.name}</strong>
+                <strong>${escapeHtml(item.name)}</strong>
                 <span>${createdAt}</span>
               </div>
-              <p>${item.text || ''}</p>
+              <p>${escapeHtml(item.text)}</p>
               ${mediaHtml}
             </article>
           `;

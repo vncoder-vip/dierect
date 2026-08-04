@@ -3,8 +3,14 @@ lucide.createIcons();
 
 const initialComments = [];
 let activePreviewObjectUrl = null;
+const localCommentMediaUrls = new Set();
 
 const COMMENT_EDITOR_STORAGE_KEY = 'directchat-comment-samples';
+const COMMENT_MEDIA_CACHE_KEY = 'directchat-comment-media';
+
+window.addEventListener('beforeunload', () => {
+  localCommentMediaUrls.forEach((url) => URL.revokeObjectURL(url));
+});
 
 function loadStoredCommentSamples() {
   try {
@@ -44,9 +50,12 @@ async function loadRemoteComments() {
         name: String(comment?.name || '').trim().slice(0, 24),
         text: String(comment?.text || '').trim().slice(0, 120),
         created_at: String(comment?.created_at || comment?.createdAt || '').trim(),
+        id: String(comment?.id || comment?._id || '').trim(),
+        ...getCommentMedia(comment),
         storage_label: String(comment?.storage_label || (comment?.storage_id ? `Sanity #${comment.storage_id}` : '')).trim()
       }))
       .filter((comment) => comment.name && comment.text)
+      .map(mergeCachedCommentMedia)
       .sort((newer, older) => {
         const newerTime = Date.parse(newer.created_at);
         const olderTime = Date.parse(older.created_at);
@@ -63,10 +72,66 @@ async function loadRemoteComments() {
 function sanitizeMediaPreview(url) {
   if (!url) return '';
   try {
-    const parsed = new URL(url);
+    const parsed = new URL(url, window.location.origin);
     return parsed.href;
   } catch {
     return '';
+  }
+}
+
+function inferMediaTypeFromUrl(url) {
+  const cleanUrl = String(url || '').split(/[?#]/, 1)[0].toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(cleanUrl)) return 'image';
+  if (/\.(mp4|webm|ogg|mov|m4v)$/i.test(cleanUrl)) return 'video';
+  return '';
+}
+
+function getCommentMedia(comment) {
+  const mediaUrl = sanitizeMediaPreview(comment?.media_url || comment?.mediaUrl || '');
+  const explicitType = String(comment?.media_type || comment?.mediaType || '').trim().toLowerCase();
+  const mediaType = explicitType === 'image' || explicitType === 'video'
+    ? explicitType
+    : inferMediaTypeFromUrl(mediaUrl);
+  return {
+    media_type: mediaType,
+    media_url: mediaType && mediaUrl ? mediaUrl : ''
+  };
+}
+
+function getCommentMediaCacheKey(comment) {
+  const id = String(comment?.id || comment?._id || '').trim();
+  if (id) return `id:${id}`;
+  const name = String(comment?.name || '').trim().toLowerCase();
+  const text = String(comment?.text || '').trim().toLowerCase();
+  return name && text ? `content:${name}|${text}` : '';
+}
+
+function readCommentMediaCache() {
+  try {
+    const cache = JSON.parse(localStorage.getItem(COMMENT_MEDIA_CACHE_KEY) || '{}');
+    return cache && typeof cache === 'object' ? cache : {};
+  } catch {
+    return {};
+  }
+}
+
+function mergeCachedCommentMedia(comment) {
+  if (comment.media_url) return comment;
+  const cached = readCommentMediaCache()[getCommentMediaCacheKey(comment)];
+  if (!cached) return comment;
+  return { ...comment, ...getCommentMedia(cached) };
+}
+
+function rememberCommentMedia(comment) {
+  const media = getCommentMedia(comment);
+  const key = getCommentMediaCacheKey(comment);
+  if (!key || !media.media_url || media.media_url.startsWith('blob:')) return;
+  const cache = readCommentMediaCache();
+  cache[key] = media;
+  try {
+    localStorage.setItem(COMMENT_MEDIA_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // Media cache is an enhancement; the comment itself remains usable.
   }
 }
 
@@ -1762,10 +1827,71 @@ function removeActiveCommentSprites() {
   activeCommentNodes.forEach((node) => {
     if (!node?.sprite) return;
     scene.remove(node.sprite);
-    if (node.sprite.material?.map) node.sprite.material.map.dispose();
-    node.sprite.material.dispose();
+    node.disposed = true;
+    node.videos?.forEach((video) => {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+    });
+    node.materials?.forEach((material) => {
+      if (material.map) material.map.dispose();
+      material.dispose();
+    });
   });
   activeCommentNodes = [];
+}
+
+function addCommentMediaPreview(node, mediaType, mediaUrl) {
+  if (!mediaType || !mediaUrl) return;
+
+  const addTextureSprite = (texture, aspectRatio) => {
+    if (node.disposed) {
+      texture.dispose();
+      return;
+    }
+
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      opacity: 1
+    });
+    const mediaSprite = new THREE.Sprite(material);
+    const maxWidth = 10;
+    const maxHeight = 3.8;
+    const height = Math.min(maxHeight, maxWidth / Math.max(aspectRatio, 0.25));
+    mediaSprite.scale.set(height * Math.max(aspectRatio, 0.25), height, 1);
+    mediaSprite.position.set(0, -2.7, 0.15);
+    node.sprite.add(mediaSprite);
+    node.materials.push(material);
+  };
+
+  if (mediaType === 'image') {
+    const image = new Image();
+    if (!mediaUrl.startsWith('blob:') && !mediaUrl.startsWith('data:')) image.crossOrigin = 'anonymous';
+    image.onload = () => {
+      const texture = new THREE.Texture(image);
+      texture.needsUpdate = true;
+      addTextureSprite(texture, image.naturalWidth / image.naturalHeight || 1);
+    };
+    image.src = mediaUrl;
+    return;
+  }
+
+  const video = document.createElement('video');
+  video.muted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.crossOrigin = 'anonymous';
+  video.src = mediaUrl;
+  node.videos.push(video);
+  video.addEventListener('loadedmetadata', () => {
+    const texture = new THREE.VideoTexture(video);
+    texture.minFilter = THREE.LinearFilter;
+    addTextureSprite(texture, video.videoWidth / video.videoHeight || 16 / 9);
+    video.play().catch(() => {});
+  }, { once: true });
+  video.load();
 }
 
 function createCommentSprite(entry, slot, visibleCount) {
@@ -1781,12 +1907,14 @@ function createCommentSprite(entry, slot, visibleCount) {
     opacity: 1.0
   });
 
-  const sprite = new THREE.Sprite(material);
+  const sprite = new THREE.Group();
+  const textSprite = new THREE.Sprite(material);
   const canvasAspect = canvas.width / canvas.height;
   const bubbleScale = visibleCount > 1 ? 2.75 : 3.2 * 1.35;
-  const baseScaleX = canvasAspect * bubbleScale;
-  const baseScaleY = bubbleScale;
-  sprite.scale.set(baseScaleX, baseScaleY, 1);
+  textSprite.scale.set(canvasAspect * bubbleScale, bubbleScale, 1);
+  const media = getCommentMedia(entry);
+  textSprite.position.y = media.media_url ? 1.8 : 0;
+  sprite.add(textSprite);
 
   const startAngle = (slot / visibleCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.18;
   sprite.position.set(
@@ -1797,15 +1925,20 @@ function createCommentSprite(entry, slot, visibleCount) {
 
   scene.add(sprite);
 
-  activeCommentNodes.push({
+  const node = {
     sprite,
     angle: startAngle,
-    baseScaleX,
-    baseScaleY,
+    baseScaleX: 1,
+    baseScaleY: 1,
     startRadiusA: ORBIT_START_RADIUS_A,
     startRadiusB: ORBIT_START_RADIUS_B,
-    orbitTilt: (Math.random() - 0.5) * 0.6
-  });
+    orbitTilt: (Math.random() - 0.5) * 0.6,
+    materials: [material],
+    videos: [],
+    disposed: false
+  };
+  activeCommentNodes.push(node);
+  addCommentMediaPreview(node, media.media_type, media.media_url);
 }
 
 function updateCommentBatchStatus() {
@@ -1883,9 +2016,13 @@ function updateActiveComment(deltaTime) {
 
     if (progress > FADE_START) {
       const fadeOut = 1 - (progress - FADE_START) / (1 - FADE_START);
-      node.sprite.material.opacity = Math.max(0, fadeOut);
+      node.materials.forEach((material) => {
+        material.opacity = Math.max(0, fadeOut);
+      });
     } else {
-      node.sprite.material.opacity = 1;
+      node.materials.forEach((material) => {
+        material.opacity = 1;
+      });
     }
   });
 
@@ -2040,13 +2177,23 @@ async function handleCommentSubmit(event) {
       savedComment = await saveCommentToDatabase(payload);
     }
 
+    const savedMedia = getCommentMedia(savedComment || {});
+    const inputMedia = getCommentMedia({ media_type: mediaType || fileMediaType, media_url: mediaUrl });
+    let localMediaUrl = savedMedia.media_url || inputMedia.media_url;
+    if (!localMediaUrl && selectedFile && fileMediaType) {
+      localMediaUrl = URL.createObjectURL(selectedFile);
+      localCommentMediaUrls.add(localMediaUrl);
+    }
+
     const newComment = {
+      id: String(savedComment?.id || '').trim(),
       name: savedComment?.name || name,
       text: savedComment?.text || text,
-      media_type: savedComment?.media_type || mediaType,
-      media_url: savedComment?.media_url || (mediaType === 'image' || mediaType === 'video' ? mediaUrl : ''),
+      media_type: savedMedia.media_type || inputMedia.media_type || fileMediaType,
+      media_url: localMediaUrl,
       index: commentQueue.length
     };
+    rememberCommentMedia(newComment);
     // A just-submitted comment is the newest item and should appear first.
     initialComments.unshift(newComment);
     buildCommentQueue();
