@@ -395,6 +395,10 @@ def comments_sanity():
             return jsonify({'error': str(exc)}), 507
 
     if request.method == 'DELETE':
+        try:
+            body = request.get_json(silent=True) or {}
+        except Exception:
+            body = {}
         delete_password = str(body.get('password') or '') if isinstance(body, dict) else ''
         if not get_env_value('ADMIN_DELETE_PASSWORD') or delete_password != get_env_value('ADMIN_DELETE_PASSWORD'):
             return jsonify({'error': 'Invalid admin password'}), 401

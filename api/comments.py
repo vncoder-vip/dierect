@@ -213,6 +213,56 @@ def list_comments_from_storage_manager():
     return sorted(all_comments, key=lambda item: item.get('created_at') or '', reverse=True)[:100]
 
 
+def get_comments_from_configured_backends():
+    if get_configured_sanity_storages():
+        try:
+            comments = list_comments_from_storage_manager()
+            if comments:
+                return comments
+        except Exception as exc:
+            print(f'Unable to read comments from Sanity backend: {exc}')
+
+    if not pool:
+        return []
+
+    from psycopg2.extras import RealDictCursor
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
+            rows = cur.fetchall()
+        rows.reverse()
+        return rows
+    finally:
+        pool.putconn(conn)
+
+
+def persist_comment_to_configured_backends(comment):
+    if get_configured_sanity_storages():
+        try:
+            return persist_comment_with_storage_manager(comment)
+        except Exception as exc:
+            print(f'Unable to persist comment to Sanity backend: {exc}')
+
+    if not pool:
+        raise RuntimeError('No backend configured')
+
+    from psycopg2.extras import RealDictCursor
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                'INSERT INTO comments (name, text, media_type, media_url) VALUES (%s, %s, %s, %s) RETURNING id, name, text, media_type, media_url, created_at',
+                (comment['name'], comment['text'], comment.get('media_type') or None, comment.get('media_url') or None)
+            )
+            created = cur.fetchone()
+            conn.commit()
+        return created
+    finally:
+        pool.putconn(conn)
+
+
+@app.route('/api/comments', methods=['GET', 'POST', 'DELETE'])
 @app.route('/', methods=['GET', 'POST', 'DELETE'])
 def handle():
     if pool:
@@ -310,6 +360,10 @@ def comments_sanity():
             return jsonify({'error': str(exc)}), 507
 
     if request.method == 'DELETE':
+        try:
+            body = request.get_json(silent=True) or {}
+        except Exception:
+            body = {}
         delete_password = str(body.get('password') or '') if isinstance(body, dict) else ''
         if not get_env_value('ADMIN_DELETE_PASSWORD') or delete_password != get_env_value('ADMIN_DELETE_PASSWORD'):
             return jsonify({'error': 'Invalid admin password'}), 401
