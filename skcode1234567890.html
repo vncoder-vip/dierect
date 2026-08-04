@@ -227,27 +227,40 @@
         deleteButton.type = 'button';
         deleteButton.className = 'delete-comment-button';
         deleteButton.textContent = 'Xóa';
-        deleteButton.addEventListener('click', () => deleteRemoteComment(comment.id, deleteButton));
+        deleteButton.addEventListener('click', () => deleteRemoteComment(comment, deleteButton));
         card.append(content, deleteButton);
         remoteList.appendChild(card);
       });
     }
 
-    async function deleteRemoteComment(id, button) {
+    async function deleteRemoteComment(comment, button) {
       if (!window.confirm('Xóa bình luận này khỏi Sanity?')) return;
+      const id = String(comment?.id || '').trim();
+      const storageId = String(comment?.storage_id || '').trim();
+      if (!id) {
+        remoteStatus.textContent = 'Không thể xóa: bình luận không có document ID Sanity.';
+        return;
+      }
       button.disabled = true;
       remoteStatus.textContent = 'Đang xóa...';
       try {
         const response = await fetch('/api/comments', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id, password: accessPassword.value })
+          body: JSON.stringify({
+            id,
+            storage_id: storageId,
+            password: String(accessPassword.value || '').trim()
+          })
         });
-        if (!response.ok) throw new Error('Delete failed');
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.error || `Xóa thất bại (HTTP ${response.status}).`);
         await loadRemoteComments();
-      } catch {
+      } catch (error) {
         button.disabled = false;
-        remoteStatus.textContent = 'Xóa thất bại. Kiểm tra ADMIN_DELETE_PASSWORD trên Vercel.';
+        remoteStatus.textContent = error instanceof Error
+          ? error.message
+          : 'Xóa thất bại. Kiểm tra ADMIN_DELETE_PASSWORD trên Vercel.';
       }
     }
 

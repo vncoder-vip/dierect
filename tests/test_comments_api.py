@@ -20,6 +20,46 @@ def test_delete_route_returns_client_error_instead_of_server_error():
     assert response.status_code in (400, 401, 405)
 
 
+def test_delete_sanity_comment_uses_document_and_storage_id(monkeypatch):
+    module = importlib.import_module('api.comments')
+    storage = {'id': 'primary', 'projectId': 'demo', 'dataset': 'production', 'token': 'token'}
+    calls = []
+    monkeypatch.setenv('ADMIN_DELETE_PASSWORD', 'secret')
+    monkeypatch.setattr(module, 'get_configured_sanity_storages', lambda: [storage])
+
+    def fake_sanity_request(storage_arg, endpoint, method='GET', json_body=None):
+        calls.append((storage_arg, endpoint, method, json_body))
+        return {'transactionId': 'transaction-1'}
+
+    monkeypatch.setattr(module, 'sanity_request', fake_sanity_request)
+    response = module.app.test_client().delete(
+        '/api/comments',
+        json={'id': 'comment-1', 'storage_id': 'primary', 'password': 'secret'}
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()['deleted'] is True
+    assert calls[0][0]['id'] == 'primary'
+    assert calls[0][2] == 'POST'
+    assert calls[0][3] == {'mutations': [{'delete': {'id': 'comment-1'}}]}
+
+
+def test_delete_sanity_comment_rejects_unknown_storage(monkeypatch):
+    module = importlib.import_module('api.comments')
+    monkeypatch.setenv('ADMIN_DELETE_PASSWORD', 'secret')
+    monkeypatch.setattr(module, 'get_configured_sanity_storages', lambda: [
+        {'id': 'primary', 'projectId': 'demo', 'dataset': 'production', 'token': 'token'}
+    ])
+
+    response = module.app.test_client().delete(
+        '/api/comments',
+        json={'id': 'comment-1', 'storage_id': 'missing', 'password': 'secret'}
+    )
+
+    assert response.status_code == 400
+    assert response.get_json()['error'] == 'Unknown Sanity storage'
+
+
 def test_api_enriches_sanity_comments_with_storage_metadata(monkeypatch):
     module = importlib.import_module('api.comments')
     monkeypatch.setattr(module, 'get_configured_sanity_storages', lambda: [{'id': 'primary', 'projectId': 'demo', 'dataset': 'production', 'token': 'token'}])

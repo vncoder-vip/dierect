@@ -245,6 +245,42 @@ def create_comment_in_storage(storage, comment):
     }
 
 
+def delete_comment_from_storage(storage, comment_id):
+    payload = {'mutations': [{'delete': {'id': comment_id}}]}
+    sanity_request(
+        storage,
+        f"/data/mutate/{urlparse.quote(storage['dataset'])}?returnIds=true",
+        method='POST',
+        json_body=payload
+    )
+    return {
+        'id': comment_id,
+        'storage_id': storage['id'],
+        'storage_label': f"Sanity #{storage['id']}"
+    }
+
+
+def delete_comment_with_storage_manager(comment_id, storage_id=''):
+    storages = get_configured_sanity_storages()
+    if not storages:
+        raise RuntimeError('No Sanity storage configured')
+
+    requested_storage_id = str(storage_id or '').strip()
+    if requested_storage_id:
+        storages = [storage for storage in storages if str(storage['id']) == requested_storage_id]
+        if not storages:
+            raise ValueError('Unknown Sanity storage')
+
+    errors = []
+    for storage in storages:
+        try:
+            return delete_comment_from_storage(storage, comment_id)
+        except Exception as exc:
+            errors.append(f"{storage['id']}: {exc}")
+
+    raise RuntimeError('Unable to delete comment from Sanity: ' + '; '.join(errors))
+
+
 def persist_comment_with_storage_manager(comment):
     storages = get_configured_sanity_storages()
     if not storages:
@@ -450,7 +486,14 @@ def comments_sanity():
         id_ = str(body.get('id') or '')
         if not id_:
             return jsonify({'error': 'Invalid comment id'}), 400
-        return jsonify({'error': 'Delete not supported for storage manager'}), 405
+        storage_id = str(body.get('storage_id') or '').strip()
+        try:
+            deleted = delete_comment_with_storage_manager(id_, storage_id)
+            return jsonify({'deleted': True, **deleted}), 200
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({'error': str(exc)}), 502
 
 
 if __name__ == '__main__':
