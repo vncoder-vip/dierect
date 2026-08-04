@@ -277,7 +277,7 @@ def comments_postgres():
 
 def comments_sanity():
     if request.method == 'GET':
-        return jsonify(list_comments_from_storage_manager()), 200
+        return jsonify(get_comments_from_configured_backends()), 200
 
     if request.method == 'POST':
         if request.content_type and 'multipart/form-data' in request.content_type:
@@ -304,7 +304,7 @@ def comments_sanity():
         if not comment:
             return jsonify({'error': 'Name and message are required'}), 400
         try:
-            created = persist_comment_with_storage_manager(comment)
+            created = persist_comment_to_configured_backends(comment)
             return jsonify(created), 201
         except RuntimeError as exc:
             return jsonify({'error': str(exc)}), 507

@@ -387,62 +387,55 @@ function normaliseComment(input) {
   return { name, text, media_type: safeMediaType, media_url: safeMediaUrl };
 }
 
-async function handleComments(request, response) {
-  if (pool) {
-    if (request.method === 'GET') {
-      const result = await pool.query(
-        'SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100'
-      );
-      return sendJson(response, 200, result.rows.reverse());
-    }
-
-    if (request.method === 'POST') {
-      const contentTypeHeader = request.headers['content-type'] || '';
-      let payload = { name: '', text: '', media_type: '', media_url: '' };
-
-      if (contentTypeHeader.includes('multipart/form-data')) {
-        const rawBody = await readRequestBody(request);
-        const parts = parseMultipartFormData(rawBody, contentTypeHeader);
-        const fields = {};
-        let uploadedFile = null;
-        for (const part of parts || []) {
-          if (part.fileName) {
-            uploadedFile = saveUploadedFile(part.fileName, part.contentTypeHeader, part.bodyBuffer);
-          } else {
-            fields[part.fieldName] = part.bodyBuffer.toString('utf8');
-          }
-        }
-        payload = {
-          name: fields.name || '',
-          text: fields.text || '',
-          media_type: fields.media_type || uploadedFile?.mediaType || '',
-          media_url: uploadedFile?.publicUrl || fields.media_url || ''
-        };
-      } else {
-        const rawBody = await readRequestBody(request);
-        payload = parseJsonBody(rawBody);
-      }
-
-      const comment = normaliseComment(payload);
-      if (!comment) return sendJson(response, 400, { error: 'Name and message are required' });
-      const result = await pool.query(
-        'INSERT INTO comments (name, text, media_type, media_url) VALUES ($1, $2, $3, $4) RETURNING id, name, text, media_type, media_url, created_at',
-        [comment.name, comment.text, comment.media_type || null, comment.media_url || null]
-      );
-      return sendJson(response, 201, result.rows[0]);
-    }
-
-    response.setHeader('Allow', 'GET, POST');
-    return sendJson(response, 405, { error: 'Method not allowed' });
-  }
-
+async function readCommentsFromConfiguredBackends() {
   const storages = getConfiguredSanityStorages();
-  if (!storages.length) {
-    return sendJson(response, 503, { error: 'No storage backend configured' });
+  if (storages.length) {
+    try {
+      const comments = await listCommentsFromStorageManager();
+      if (comments.length > 0) {
+        return comments;
+      }
+    } catch (error) {
+      console.warn('Unable to read comments from Sanity, falling back to Postgres:', error.message);
+    }
   }
 
+  if (!pool) {
+    return [];
+  }
+
+  const result = await pool.query(
+    'SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100'
+  );
+  return result.rows.reverse();
+}
+
+async function persistCommentToConfiguredBackends(comment) {
+  const storages = getConfiguredSanityStorages();
+  if (storages.length) {
+    try {
+      return await persistCommentWithStorageManager(comment);
+    } catch (error) {
+      console.warn('Unable to persist comment to Sanity, falling back to Postgres:', error.message);
+    }
+  }
+
+  if (!pool) {
+    const error = new Error('No storage backend configured');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const result = await pool.query(
+    'INSERT INTO comments (name, text, media_type, media_url) VALUES ($1, $2, $3, $4) RETURNING id, name, text, media_type, media_url, created_at',
+    [comment.name, comment.text, comment.media_type || null, comment.media_url || null]
+  );
+  return result.rows[0];
+}
+
+async function handleComments(request, response) {
   if (request.method === 'GET') {
-    const comments = await listCommentsFromStorageManager();
+    const comments = await readCommentsFromConfiguredBackends();
     return sendJson(response, 200, comments);
   }
 
@@ -476,7 +469,7 @@ async function handleComments(request, response) {
     const comment = normaliseComment(payload);
     if (!comment) return sendJson(response, 400, { error: 'Name and message are required' });
     try {
-      const created = await persistCommentWithStorageManager(comment);
+      const created = await persistCommentToConfiguredBackends(comment);
       return sendJson(response, 201, created);
     } catch (error) {
       return sendJson(response, error.statusCode || 500, { error: error.message });
@@ -546,6 +539,7 @@ if (require.main === module) {
 
 module.exports = {
   createServer,
+  handleComments,
   getConfiguredSanityStorages,
   getMaxCommentsPerStorage,
   loadEnvFile,

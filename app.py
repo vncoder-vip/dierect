@@ -249,12 +249,60 @@ def list_comments_from_storage_manager():
     return sorted(all_comments, key=lambda item: item.get('created_at') or '', reverse=True)[:100]
 
 
+def get_comments_from_configured_backends():
+    if get_configured_sanity_storages():
+        try:
+            comments = list_comments_from_storage_manager()
+            if comments:
+                return comments
+        except Exception as exc:
+            print(f'Unable to read comments from Sanity backend: {exc}')
+
+    if not pool:
+        return []
+
+    from psycopg2.extras import RealDictCursor
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute('SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
+            rows = cur.fetchall()
+        rows.reverse()
+        return rows
+    finally:
+        pool.putconn(conn)
+
+
+def persist_comment_to_configured_backends(comment):
+    if get_configured_sanity_storages():
+        try:
+            return persist_comment_with_storage_manager(comment)
+        except Exception as exc:
+            print(f'Unable to persist comment to Sanity backend: {exc}')
+
+    if not pool:
+        raise RuntimeError('No backend configured')
+
+    from psycopg2.extras import RealDictCursor
+    conn = pool.getconn()
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(
+                'INSERT INTO comments (name, text, media_type, media_url) VALUES (%s, %s, %s, %s) RETURNING id, name, text, media_type, media_url, created_at',
+                (comment['name'], comment['text'], comment.get('media_type') or None, comment.get('media_url') or None)
+            )
+            created = cur.fetchone()
+            conn.commit()
+        return created
+    finally:
+        pool.putconn(conn)
+
+
 @app.route('/api/comments', methods=['GET', 'POST', 'DELETE'])
 def comments():
-    if pool:
-        return comments_postgres()
-
     if not get_configured_sanity_storages():
+        if pool:
+            return comments_postgres()
         return jsonify({'error': 'No backend configured'}), 503
     return comments_sanity()
 
@@ -314,7 +362,7 @@ def comments_postgres():
 
 def comments_sanity():
     if request.method == 'GET':
-        return jsonify(list_comments_from_storage_manager()), 200
+        return jsonify(get_comments_from_configured_backends()), 200
 
     if request.method == 'POST':
         if request.content_type and 'multipart/form-data' in request.content_type:
@@ -341,7 +389,7 @@ def comments_sanity():
         if not comment:
             return jsonify({'error': 'Name and message are required'}), 400
         try:
-            created = persist_comment_with_storage_manager(comment)
+            created = persist_comment_to_configured_backends(comment)
             return jsonify(created), 201
         except RuntimeError as exc:
             return jsonify({'error': str(exc)}), 507
