@@ -1754,7 +1754,9 @@ function startNextComment() {
   activeCommentIndex = (activeCommentIndex + 1) % commentQueue.length;
   const entry = commentQueue[activeCommentIndex];
 
-  const canvas = createMessengerBubbleCanvas(entry.name, entry.text, entry.storage_label || '');
+  // Floating bubbles should show only the comment itself; storage metadata
+  // remains available in the editor/media views.
+  const canvas = createMessengerBubbleCanvas(entry.name, entry.text);
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
 
