@@ -1,9 +1,12 @@
 [project]
 name = "chuot-chat"
 version = "1.0.0"
-description = "Chuột Chat - Vercel serverless API"
+description = "Chuột Chat Flask app"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "flask==3.0.3",
+    "requests==2.31.0",
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]

@@ -1,1 +1,2 @@
-# No external dependencies needed - api/comments.py uses Python standard library only
+Flask==3.0.3
+requests==2.31.0

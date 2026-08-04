@@ -1,0 +1,12 @@
+{
+  "builds": [
+    {
+      "src": "api/comments.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    { "src": "/api/comments", "dest": "api/comments.py" },
+    { "src": "/api/comments/(.*)", "dest": "api/comments.py" }
+  ]
+}
