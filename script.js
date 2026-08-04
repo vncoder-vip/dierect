@@ -367,6 +367,27 @@ const FOCUS_PLANET     = 'planet';
 const FOCUS_GALAXY     = 'galaxy';
 const FOCUS_SOLAR_SYSTEM = 'solar-system';
 const FOCUS_FREE       = 'free';
+const FOCUS_BENCHMARK  = 'benchmark-fractal';
+
+// The benchmark is intentionally well outside the solar-system cluster so the
+// camera has to travel to a separate, GPU-heavy scene.
+const BENCHMARK_SPHERE_POSITION = new THREE.Vector3(260, 120, -270);
+let benchmarkSphereGroup = null;
+const benchmarkShaderMaterials = [];
+let benchmarkJaggedSpikes = null;
+const BENCHMARK_SPIKE_COUNT = 100000;
+const BENCHMARK_PROCEDURAL_SPIKE_COUNT = 2_000_000_000_000_000_000;
+
+let benchmarkFpsPanel = null;
+let benchmarkFpsValue = null;
+let benchmarkFpsDetail = null;
+let benchmarkFpsLastTimestamp = 0;
+let benchmarkFpsFrameCount = 0;
+let benchmarkTargetRotationX = 0;
+let benchmarkTargetRotationY = 0;
+let benchmarkTargetRotationZ = 0;
+let benchmarkCameraRotationX = 0;
+let benchmarkCameraRotationY = 0;
 
 let cameraFocusTarget = FOCUS_SOLAR_SYSTEM;
 let cameraLookTarget    = new THREE.Vector3(0, 0, 0);
@@ -1147,6 +1168,427 @@ function createSolarSystem() {
   });
 }
 
+// GPU benchmark object: a high-subdivision icosphere whose surface is
+// displaced by animated multi-octave 3D fractal noise. The shader keeps the
+// geometry procedural while the dense mesh and surface points provide a real
+// render workload for requestAnimationFrame/WebGL.
+function createFractalBenchmarkSphere() {
+  benchmarkSphereGroup = new THREE.Group();
+  benchmarkSphereGroup.position.copy(BENCHMARK_SPHERE_POSITION);
+  benchmarkSphereGroup.userData.benchmarkTarget = true;
+  benchmarkSphereGroup.userData.proceduralProtrusionCount = BENCHMARK_PROCEDURAL_SPIKE_COUNT;
+  benchmarkSphereGroup.userData.colorModel = 'asynchronous-argb-gradient';
+  scene.add(benchmarkSphereGroup);
+
+  const vertexShader = `
+    uniform float uTime;
+    uniform float uRadius;
+    uniform float uMicroDensity;
+    varying vec3 vNormal;
+    varying vec3 vDirection;
+    varying float vFractal;
+    varying float vRidge;
+
+    float hash(vec3 p) {
+      p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+      p *= 17.0;
+      return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
+    }
+
+    float noise3d(vec3 p) {
+      vec3 cell = floor(p);
+      vec3 local = fract(p);
+      local = local * local * (3.0 - 2.0 * local);
+
+      float x00 = mix(hash(cell), hash(cell + vec3(1.0, 0.0, 0.0)), local.x);
+      float x10 = mix(hash(cell + vec3(0.0, 1.0, 0.0)), hash(cell + vec3(1.0, 1.0, 0.0)), local.x);
+      float x01 = mix(hash(cell + vec3(0.0, 0.0, 1.0)), hash(cell + vec3(1.0, 0.0, 1.0)), local.x);
+      float x11 = mix(hash(cell + vec3(0.0, 1.0, 1.0)), hash(cell + vec3(1.0, 1.0, 1.0)), local.x);
+      return mix(mix(x00, x10, local.y), mix(x01, x11, local.y), local.z);
+    }
+
+    float fbm(vec3 p) {
+      float value = 0.0;
+      float amplitude = 0.5;
+      for (int octave = 0; octave < 6; octave++) {
+        value += amplitude * noise3d(p);
+        p = p * 2.03 + vec3(13.1, 7.7, 5.3);
+        amplitude *= 0.5;
+      }
+      return value;
+    }
+
+    float ridgedFbm(vec3 p) {
+      float value = 0.0;
+      float amplitude = 0.5;
+      for (int octave = 0; octave < 6; octave++) {
+        float ridge = 1.0 - abs(noise3d(p) * 2.0 - 1.0);
+        value += ridge * ridge * amplitude;
+        p = p * 2.08 + vec3(9.2, 4.6, 15.7);
+        amplitude *= 0.5;
+      }
+      return value;
+    }
+
+    // Repeats the same 3D cell at a smaller scale on every pass. Sixteen
+    // passes plus the orbit fold approximate the requested self-similar
+    // infinity: each pass contributes smaller protrusions and cavities.
+    float recursiveScaleField(vec3 p) {
+      float value = 0.0;
+      float amplitude = 1.0;
+      float scale = 1.0;
+      vec3 folded = p;
+      for (int level = 0; level < 16; level++) {
+        folded = abs(folded);
+        if (folded.x < folded.y) folded.xy = folded.yx;
+        if (folded.x < folded.z) folded.xz = folded.zx;
+        if (folded.y < folded.z) folded.yz = folded.zy;
+        folded = folded * 1.73 - vec3(0.52, 0.37, 0.29);
+        vec3 cell = abs(fract(folded * scale) - 0.5);
+        float cubeLobe = 1.0 - smoothstep(0.08, 0.46, max(cell.x, max(cell.y, cell.z)));
+        float creaseLobe = 1.0 - smoothstep(0.02, 0.23, min(cell.x, min(cell.y, cell.z)));
+        value += (cubeLobe * 0.64 + creaseLobe * 0.36) * amplitude;
+        scale *= 2.03;
+        amplitude *= 0.5;
+      }
+      return value / 1.98;
+    }
+
+    float recursiveOrbitField(vec3 p) {
+      vec3 z = p;
+      float closestShell = 1000.0;
+      for (int level = 0; level < 14; level++) {
+        z = abs(z);
+        if (z.x < z.y) z.xy = z.yx;
+        if (z.x < z.z) z.xz = z.zx;
+        if (z.y < z.z) z.yz = z.zy;
+        z = z * 1.86 - vec3(0.65, 0.49, 0.58);
+        z += p * 0.07;
+        closestShell = min(closestShell, abs(length(z) - 0.68));
+      }
+      return 1.0 - smoothstep(0.015, 0.34, closestShell);
+    }
+
+    // Procedural micro-lobes represent two quintillion (2 x 10^18) tiny
+    // protrusions without allocating two quintillion instance matrices. The density drives the base
+    // scale, while successive layers keep shrinking toward pixel precision.
+    float proceduralMicroSpikes(vec3 p) {
+      float value = 0.0;
+      float amplitude = 0.42;
+      float scale = max(32.0, pow(uMicroDensity, 0.3333333));
+      for (int level = 0; level < 8; level++) {
+        vec3 cell = abs(fract(p * scale) - 0.5);
+        float needle = 1.0 - smoothstep(0.012, 0.22, length(cell));
+        float ridge = 1.0 - smoothstep(0.025, 0.38, max(cell.x, max(cell.y, cell.z)));
+        value += mix(needle, ridge, 0.35) * amplitude;
+        scale *= 1.92;
+        amplitude *= 0.5;
+      }
+      return clamp(value, 0.0, 1.0);
+    }
+
+    void main() {
+      vec3 direction = normalize(position);
+      float macro = fbm(direction * 2.25 + vec3(uTime * 0.012, 0.0, 0.0));
+      float ridged = ridgedFbm(direction * 5.5 - vec3(0.0, uTime * 0.018, 0.0));
+      float sharpRidges = ridgedFbm(direction * 13.0 + vec3(uTime * 0.021, 0.0, 0.0));
+      float micro = fbm(direction * 31.0 + vec3(0.0, 0.0, uTime * 0.03));
+      float recursive = recursiveScaleField(direction * 1.45 + vec3(0.13, 0.37, 0.71) + vec3(uTime * 0.001));
+      float recursiveFine = recursiveScaleField(direction * 2.9 - vec3(0.47, 0.19, 0.31) - vec3(uTime * 0.0014));
+      float orbitFractal = recursiveOrbitField(direction * 1.18 + vec3(0.23, 0.41, 0.17));
+      float orbitFine = recursiveOrbitField(direction * 2.36 - vec3(0.31, 0.16, 0.44));
+      float microSpikes = proceduralMicroSpikes(direction * 0.74 + vec3(0.17, 0.29, 0.43));
+      float spikeField = pow(clamp(sharpRidges, 0.0, 1.0), 2.2);
+      float recursivePeaks = pow(clamp(recursive, 0.0, 1.0), 1.35);
+      float displacement = (macro - 0.46) * 15.0
+        + (ridged - 0.45) * 18.0
+        + (spikeField - 0.18) * 22.0
+        + (recursivePeaks - 0.26) * 24.0
+        + (recursiveFine - 0.34) * 10.0
+        + (orbitFractal - 0.35) * 18.0
+        + (orbitFine - 0.28) * 8.0
+        + (microSpikes - 0.24) * 3.2
+        + (micro - 0.5) * 5.0;
+      displacement = clamp(displacement, -20.0, 30.0);
+
+      vec3 displaced = direction * (uRadius + displacement);
+      vDirection = direction;
+      vFractal = clamp(macro * 0.24 + ridged * 0.11 + spikeField * 0.11 + recursive * 0.21 + recursiveFine * 0.08 + orbitFractal * 0.14 + orbitFine * 0.04 + microSpikes * 0.05 + micro * 0.02, 0.0, 1.0);
+      vRidge = clamp(ridged * 0.15 + spikeField * 0.23 + recursivePeaks * 0.36 + orbitFractal * 0.2 + microSpikes * 0.06, 0.0, 1.0);
+      vNormal = normalize(normalMatrix * direction);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(displaced, 1.0);
+    }
+  `;
+
+  const fragmentShader = `
+    uniform float uTime;
+    uniform float uGradientOffset;
+    uniform float uMicroDensity;
+    varying vec3 vNormal;
+    varying vec3 vDirection;
+    varying float vFractal;
+    varying float vRidge;
+
+    vec3 hsv2rgb(vec3 c) {
+      vec4 k = vec4(1.0, 0.6666667, 0.3333333, 3.0);
+      vec3 p = abs(fract(c.xxx + k.xyz) * 6.0 - k.www);
+      return c.z * mix(k.xxx, clamp(p - k.xxx, 0.0, 1.0), c.y);
+    }
+
+    float recursiveScaleField(vec3 p) {
+      float value = 0.0;
+      float amplitude = 1.0;
+      float scale = 1.0;
+      vec3 folded = p;
+      for (int level = 0; level < 16; level++) {
+        folded = abs(folded);
+        if (folded.x < folded.y) folded.xy = folded.yx;
+        if (folded.x < folded.z) folded.xz = folded.zx;
+        if (folded.y < folded.z) folded.yz = folded.zy;
+        folded = folded * 1.73 - vec3(0.52, 0.37, 0.29);
+        vec3 cell = abs(fract(folded * scale) - 0.5);
+        float cubeLobe = 1.0 - smoothstep(0.08, 0.46, max(cell.x, max(cell.y, cell.z)));
+        float creaseLobe = 1.0 - smoothstep(0.02, 0.23, min(cell.x, min(cell.y, cell.z)));
+        value += (cubeLobe * 0.64 + creaseLobe * 0.36) * amplitude;
+        scale *= 2.03;
+        amplitude *= 0.5;
+      }
+      return value / 1.98;
+    }
+
+    float recursiveOrbitField(vec3 p) {
+      vec3 z = p;
+      float closestShell = 1000.0;
+      for (int level = 0; level < 14; level++) {
+        z = abs(z);
+        if (z.x < z.y) z.xy = z.yx;
+        if (z.x < z.z) z.xz = z.zx;
+        if (z.y < z.z) z.yz = z.zy;
+        z = z * 1.86 - vec3(0.65, 0.49, 0.58);
+        z += p * 0.07;
+        closestShell = min(closestShell, abs(length(z) - 0.68));
+      }
+      return 1.0 - smoothstep(0.015, 0.34, closestShell);
+    }
+
+    float proceduralMicroSpikes(vec3 p) {
+      float value = 0.0;
+      float amplitude = 0.42;
+      float scale = max(32.0, pow(uMicroDensity, 0.3333333));
+      for (int level = 0; level < 8; level++) {
+        vec3 cell = abs(fract(p * scale) - 0.5);
+        float needle = 1.0 - smoothstep(0.012, 0.22, length(cell));
+        float ridge = 1.0 - smoothstep(0.025, 0.38, max(cell.x, max(cell.y, cell.z)));
+        value += mix(needle, ridge, 0.35) * amplitude;
+        scale *= 1.92;
+        amplitude *= 0.5;
+      }
+      return clamp(value, 0.0, 1.0);
+    }
+
+    void main() {
+      vec3 normal = normalize(vNormal);
+      vec3 lightDirection = normalize(vec3(-0.38, 0.72, 0.94));
+      float lighting = 0.32 + 0.86 * max(dot(normal, lightDirection), 0.0);
+      float relief = mix(0.62, 1.5, vRidge);
+      vec3 direction = normalize(vDirection);
+      float recursivePixels = recursiveScaleField(direction * 1.45 + vec3(0.13, 0.37, 0.71) + vec3(uTime * 0.001));
+      float recursiveFinePixels = recursiveScaleField(direction * 2.9 - vec3(0.47, 0.19, 0.31) - vec3(uTime * 0.0014));
+      float orbitPixels = recursiveOrbitField(direction * 1.18 + vec3(0.23, 0.41, 0.17));
+      float orbitFinePixels = recursiveOrbitField(direction * 2.36 - vec3(0.31, 0.16, 0.44));
+      float microSpikes = proceduralMicroSpikes(direction * 0.74 + vec3(0.17, 0.29, 0.43));
+      float recursiveGlow = clamp(recursivePixels * 0.43 + recursiveFinePixels * 0.2 + orbitPixels * 0.2 + orbitFinePixels * 0.07 + microSpikes * 0.1, 0.0, 1.0);
+      // Every material and every surface direction gets its own phase. This
+      // keeps the ARGB gradient asynchronous instead of making the whole
+      // sphere flash in lockstep.
+      float gradientPhase = uTime * 0.16 + uGradientOffset * 1.73
+        + vFractal * 1.85 + recursiveGlow * 1.65 + microSpikes * 2.4
+        + vDirection.x * (0.34 + uGradientOffset * 0.11)
+        + vDirection.y * (0.27 + uGradientOffset * 0.07)
+        + vDirection.z * (0.42 + uGradientOffset * 0.13);
+      float hue = fract(gradientPhase);
+      vec3 gradientA = hsv2rgb(vec3(hue, 0.9, 1.0));
+      vec3 gradientB = hsv2rgb(vec3(fract(hue + 0.2), 0.82, 1.0));
+      vec3 color = mix(gradientA, gradientB, smoothstep(0.12, 0.92, max(vRidge, recursiveGlow)));
+
+      // Keep the requested channel order explicit as ARGB internally, then
+      // convert to WebGL's RGBA output order at the final line.
+      vec4 argbGradient = vec4(
+        0.5 + 0.5 * sin(gradientPhase * 0.73 + uTime * 0.41 + 1.1),
+        0.5 + 0.5 * sin(gradientPhase * 1.17 + uTime * 0.29 + 0.6),
+        0.5 + 0.5 * sin(gradientPhase * 0.91 + uTime * 0.37 + 2.2),
+        0.5 + 0.5 * sin(gradientPhase * 1.33 + uTime * 0.23 + 4.4)
+      );
+      color = mix(color, argbGradient.yzw, 0.24);
+      color *= lighting * relief;
+      color += vec3(1.0) * pow(vRidge, 5.0) * 0.18;
+
+      // WebGL stores the fragment as RGBA; this animated alpha channel keeps
+      // the requested ARGB-style gradient alive without making the sphere vanish.
+      float alpha = 0.76 + 0.24 * argbGradient.x;
+      gl_FragColor = vec4(color, alpha);
+    }
+  `;
+
+  const mainMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uRadius: { value: 36 },
+      uGradientOffset: { value: 0.17 },
+      uMicroDensity: { value: BENCHMARK_PROCEDURAL_SPIKE_COUNT }
+    },
+    vertexShader,
+    fragmentShader,
+    transparent: true,
+    side: THREE.FrontSide
+  });
+  benchmarkShaderMaterials.push(mainMaterial);
+
+  const mainMesh = new THREE.Mesh(new THREE.IcosahedronGeometry(36, 6), mainMaterial);
+  mainMesh.name = 'Fractal benchmark surface';
+  benchmarkSphereGroup.add(mainMesh);
+
+  const shellMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 },
+      uRadius: { value: 41 },
+      uGradientOffset: { value: 3.41 },
+      uMicroDensity: { value: BENCHMARK_PROCEDURAL_SPIKE_COUNT }
+    },
+    vertexShader,
+    fragmentShader,
+    transparent: true,
+    opacity: 0.36,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    wireframe: true,
+    side: THREE.DoubleSide
+  });
+  benchmarkShaderMaterials.push(shellMaterial);
+  benchmarkSphereGroup.add(new THREE.Mesh(new THREE.IcosahedronGeometry(41, 5), shellMaterial));
+
+  const surfacePointCount = 18000;
+  const surfacePositions = new Float32Array(surfacePointCount * 3);
+  const surfaceColors = new Float32Array(surfacePointCount * 3);
+  let seed = 918273;
+  const random = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+
+  for (let i = 0; i < surfacePointCount; i += 1) {
+    const z = random() * 2 - 1;
+    const angle = random() * Math.PI * 2;
+    const radial = Math.sqrt(Math.max(0, 1 - z * z));
+    const radius = 39.2 + random() * 3.8;
+    const offset = i * 3;
+    surfacePositions[offset] = Math.cos(angle) * radial * radius;
+    surfacePositions[offset + 1] = z * radius;
+    surfacePositions[offset + 2] = Math.sin(angle) * radial * radius;
+
+    const color = new THREE.Color().setHSL((0.48 + random() * 0.48) % 1, 0.88, 0.58);
+    surfaceColors[offset] = color.r;
+    surfaceColors[offset + 1] = color.g;
+    surfaceColors[offset + 2] = color.b;
+  }
+
+  const surfaceGeometry = new THREE.BufferGeometry();
+  surfaceGeometry.setAttribute('position', new THREE.BufferAttribute(surfacePositions, 3));
+  surfaceGeometry.setAttribute('color', new THREE.BufferAttribute(surfaceColors, 3));
+  const surfacePoints = new THREE.Points(surfaceGeometry, new THREE.PointsMaterial({
+    size: 0.34,
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.78,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+    sizeAttenuation: true
+  }));
+  surfacePoints.name = 'Fractal benchmark color detail';
+  benchmarkSphereGroup.add(surfacePoints);
+
+  // A visible 100,000-instance low-poly layer makes the silhouette readable;
+  // the shader above supplies the two-quintillion procedural micro-lobes.
+  const spikeGeometry = new THREE.ConeGeometry(0.32, 1, 4, 1);
+  const spikeMaterial = new THREE.MeshBasicMaterial({
+    vertexColors: true,
+    transparent: true,
+    opacity: 0.94,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false
+  });
+  benchmarkJaggedSpikes = new THREE.InstancedMesh(spikeGeometry, spikeMaterial, BENCHMARK_SPIKE_COUNT);
+  benchmarkJaggedSpikes.name = '100,000 visible spikes + 2e18 procedural protrusions';
+  benchmarkJaggedSpikes.userData.spikeCount = BENCHMARK_SPIKE_COUNT;
+  benchmarkJaggedSpikes.userData.proceduralSpikeCount = BENCHMARK_PROCEDURAL_SPIKE_COUNT;
+
+  const spikeDummy = new THREE.Object3D();
+  const spikeUp = new THREE.Vector3(0, 1, 0);
+  const spikeDirection = new THREE.Vector3();
+  const spikeColor = new THREE.Color();
+  let spikeSeed = 472991;
+  const spikeRandom = () => {
+    spikeSeed = (spikeSeed * 1664525 + 1013904223) >>> 0;
+    return spikeSeed / 4294967296;
+  };
+
+  for (let i = 0; i < BENCHMARK_SPIKE_COUNT; i += 1) {
+    const z = spikeRandom() * 2 - 1;
+    const angle = spikeRandom() * Math.PI * 2;
+    const radial = Math.sqrt(Math.max(0, 1 - z * z));
+    spikeDirection.set(Math.cos(angle) * radial, z, Math.sin(angle) * radial).normalize();
+
+    const spikeLength = 0.42 + spikeRandom() * 2.4;
+    const spikeWidth = 0.16 + spikeRandom() * 0.28;
+    const surfaceRadius = 41.2 + (spikeRandom() - 0.5) * 2.2;
+    spikeDummy.position.copy(spikeDirection).multiplyScalar(surfaceRadius + spikeLength * 0.5);
+    spikeDummy.quaternion.setFromUnitVectors(spikeUp, spikeDirection);
+    spikeDummy.scale.set(spikeWidth, spikeLength, spikeWidth);
+    spikeDummy.updateMatrix();
+    benchmarkJaggedSpikes.setMatrixAt(i, spikeDummy.matrix);
+
+    spikeColor.setHSL(
+      (i / BENCHMARK_SPIKE_COUNT + spikeRandom() * 0.17) % 1,
+      0.94,
+      0.58
+    );
+    benchmarkJaggedSpikes.setColorAt(i, spikeColor);
+  }
+
+  benchmarkJaggedSpikes.instanceMatrix.needsUpdate = true;
+  if (benchmarkJaggedSpikes.instanceColor) benchmarkJaggedSpikes.instanceColor.needsUpdate = true;
+  benchmarkSphereGroup.add(benchmarkJaggedSpikes);
+
+  const halo = new THREE.Mesh(
+    new THREE.SphereGeometry(45, 32, 20),
+    new THREE.MeshBasicMaterial({
+      color: 0x7c3aed,
+      transparent: true,
+      opacity: 0.055,
+      side: THREE.BackSide,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  benchmarkSphereGroup.add(halo);
+
+  [0.31, -0.48].forEach((tilt, index) => {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(44 + index * 1.4, 0.11, 8, 160),
+      new THREE.MeshBasicMaterial({
+        color: index === 0 ? 0x22d3ee : 0xf472b6,
+        transparent: true,
+        opacity: 0.26,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    ring.rotation.x = Math.PI / 2 + tilt;
+    ring.rotation.z = tilt * 0.7;
+    benchmarkSphereGroup.add(ring);
+  });
+}
+
 // Build a stylised but recognisable deep-sky galaxy from stars, dust and glow.
 function createGalaxies() {
   const makeGlowTexture = (coreColor) => {
@@ -1545,6 +1987,7 @@ async function initThree() {
   createHollywoodBlackHole();
   createDistantNeutronStar();
   createSolarSystem();
+  createFractalBenchmarkSphere();
   buildCommentQueue();
   const commentStartTimer = setTimeout(() => {
     if (!activeCommentNodes.length) startNextCommentBatch();
@@ -1608,6 +2051,8 @@ function setupTargetFinder() {
       focusOnBlackHole();
     } else if (target === FOCUS_NEUTRON) {
       focusOnNeutronStar();
+    } else if (target === FOCUS_BENCHMARK) {
+      focusOnBenchmarkSphere();
     } else if (target.startsWith('planet:')) {
       const planetName = target.slice('planet:'.length);
       const entry = solarPlanets.find((planet) => planet.name === planetName);
@@ -1630,6 +2075,46 @@ function setupTargetFinder() {
   if (nextCommentBatchButton) {
     nextCommentBatchButton.addEventListener('click', startNextCommentBatch);
   }
+}
+
+function resolveBenchmarkFpsHud() {
+  if (benchmarkFpsPanel) return true;
+  benchmarkFpsPanel = document.getElementById('benchmark-fps');
+  benchmarkFpsValue = document.getElementById('benchmark-fps-value');
+  benchmarkFpsDetail = document.getElementById('benchmark-fps-detail');
+  return Boolean(benchmarkFpsPanel && benchmarkFpsValue && benchmarkFpsDetail);
+}
+
+function showBenchmarkFps() {
+  if (!resolveBenchmarkFpsHud()) return;
+  benchmarkFpsPanel.hidden = false;
+  benchmarkFpsValue.textContent = '-- FPS';
+  benchmarkFpsDetail.textContent = 'Đang đo từ requestAnimationFrame...';
+  benchmarkFpsLastTimestamp = performance.now();
+  benchmarkFpsFrameCount = 0;
+}
+
+function hideBenchmarkFps() {
+  if (!resolveBenchmarkFpsHud()) return;
+  benchmarkFpsPanel.hidden = true;
+  benchmarkFpsLastTimestamp = 0;
+  benchmarkFpsFrameCount = 0;
+}
+
+function updateBenchmarkFps(timestamp) {
+  if (cameraFocusTarget !== FOCUS_BENCHMARK || !resolveBenchmarkFpsHud() || benchmarkFpsPanel.hidden) return;
+  if (!benchmarkFpsLastTimestamp) benchmarkFpsLastTimestamp = timestamp;
+
+  benchmarkFpsFrameCount += 1;
+  const elapsed = timestamp - benchmarkFpsLastTimestamp;
+  if (elapsed < 750) return;
+
+  const fps = benchmarkFpsFrameCount * 1000 / elapsed;
+  const frameTime = 1000 / Math.max(fps, 0.1);
+  benchmarkFpsValue.textContent = `${Math.round(fps)} FPS`;
+  benchmarkFpsDetail.textContent = `${frameTime.toFixed(1)} ms/frame • WebGL thực tế`;
+  benchmarkFpsLastTimestamp = timestamp;
+  benchmarkFpsFrameCount = 0;
 }
 
 function showFocusHint(objectName) {
@@ -1657,7 +2142,10 @@ function showFocusHint(objectName) {
     `;
     document.body.appendChild(hint);
   }
-  hint.innerText = `📷 Đang quan sát: ${objectName} — Click vào vùng trống để thoát`;
+  const orbitInstruction = cameraFocusTarget === FOCUS_BENCHMARK
+    ? 'Kéo chuột xoay mọi góc • Shift + kéo ngang để roll — Click vùng trống để thoát'
+    : 'Click vào vùng trống để thoát';
+  hint.innerText = `📷 Đang quan sát: ${objectName} — ${orbitInstruction}`;
   hint.style.opacity = '1';
 }
 
@@ -1719,6 +2207,11 @@ function onCanvasClick(event) {
     }
   }
 
+  if (benchmarkSphereGroup && raycaster.intersectObjects(benchmarkSphereGroup.children, true).length > 0) {
+    focusOnBenchmarkSphere();
+    return;
+  }
+
   if (cameraFocusTarget !== FOCUS_FREE) {
     returnToFreeOrbit();
   }
@@ -1726,6 +2219,7 @@ function onCanvasClick(event) {
 
 function focusOnBlackHole() {
   cameraFocusTarget = FOCUS_BLACK_HOLE;
+  hideBenchmarkFps();
   cameraTransitioning = true;
   playCelestialAudio('black hole');
 
@@ -1743,8 +2237,46 @@ function focusOnBlackHole() {
   showFocusHint('Hố Đen');
 }
 
+function focusOnBenchmarkSphere() {
+  const wasAlreadyBenchmark = cameraFocusTarget === FOCUS_BENCHMARK;
+  cameraFocusTarget = FOCUS_BENCHMARK;
+  focusedPlanetEntry = null;
+  focusedGalaxyEntry = null;
+  cameraTransitioning = true;
+  stopCelestialAudio();
+
+  const spherePosition = benchmarkSphereGroup
+    ? benchmarkSphereGroup.position
+    : BENCHMARK_SPHERE_POSITION;
+  const dist = 108;
+  const relative = camera.position.clone().sub(spherePosition);
+  const relativeLength = relative.length();
+  const direction = relativeLength > 0.001
+    ? relative.multiplyScalar(1 / relativeLength)
+    : new THREE.Vector3(0.35, 0.2, 0.92).normalize();
+
+  cameraPositionTarget.copy(spherePosition).addScaledVector(direction, dist);
+  cameraLookTarget.copy(spherePosition);
+  benchmarkCameraRotationY = Math.atan2(direction.x, direction.z);
+  benchmarkCameraRotationX = Math.asin(Math.max(-1, Math.min(1, direction.y)));
+  if (!wasAlreadyBenchmark && benchmarkSphereGroup) {
+    benchmarkTargetRotationX = benchmarkSphereGroup.rotation.x;
+    benchmarkTargetRotationY = benchmarkSphereGroup.rotation.y;
+    benchmarkTargetRotationZ = benchmarkSphereGroup.rotation.z;
+  }
+  currentRotationY = Math.atan2(direction.x, direction.z);
+  currentRotationX = Math.asin(Math.max(-1, Math.min(1, direction.y)));
+  targetRotationY = currentRotationY;
+  targetRotationX = currentRotationX;
+  cameraDistance = dist;
+
+  showBenchmarkFps();
+  showFocusHint('Fractal GPU Benchmark');
+}
+
 function focusOnNeutronStar() {
   cameraFocusTarget = FOCUS_NEUTRON;
+  hideBenchmarkFps();
   cameraTransitioning = true;
   playCelestialAudio('neutron star');
 
@@ -1766,6 +2298,7 @@ function focusOnNeutronStar() {
 
 function returnToFreeOrbit() {
   cameraFocusTarget  = FOCUS_FREE;
+  hideBenchmarkFps();
   focusedPlanetEntry = null;
   focusedGalaxyEntry = null;
   cameraTransitioning = true;
@@ -1782,6 +2315,7 @@ function returnToFreeOrbit() {
 
 function focusOnPlanet(entry) {
   cameraFocusTarget  = FOCUS_PLANET;
+  hideBenchmarkFps();
   focusedPlanetEntry = entry;
   cameraTransitioning = true;
   playCelestialAudio(entry.name);
@@ -1803,6 +2337,7 @@ function focusOnPlanet(entry) {
 
 function focusOnGalaxy(entry) {
   cameraFocusTarget = FOCUS_GALAXY;
+  hideBenchmarkFps();
   focusedGalaxyEntry = entry;
   focusedPlanetEntry = null;
   cameraTransitioning = true;
@@ -1819,6 +2354,25 @@ function focusOnGalaxy(entry) {
 
   const populationLabel = entry.population ? ` · ~${(entry.population / 1_000_000_000).toFixed(0)} tỷ hệ sao` : '';
   showFocusHint(`${entry.name}${populationLabel}`);
+}
+
+function applyOrbitDrag(deltaX, deltaY, roll = false) {
+  if (cameraFocusTarget === FOCUS_BENCHMARK) {
+    // The benchmark camera is fixed; dragging rotates only the sphere.
+    // Benchmark axis mapping is intentionally swapped: horizontal drag -> X,
+    // vertical drag -> Y.
+    if (roll) {
+      benchmarkTargetRotationZ -= deltaX * 0.006;
+    } else {
+      benchmarkTargetRotationX -= deltaX * 0.006;
+      benchmarkTargetRotationY += deltaY * 0.006;
+    }
+    return;
+  }
+
+  targetRotationY -= deltaX * 0.006;
+  targetRotationX += deltaY * 0.006;
+  targetRotationX = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, targetRotationX));
 }
 
 function setup360OrbitControls() {
@@ -1838,9 +2392,7 @@ function setup360OrbitControls() {
     const deltaX = e.clientX - previousMousePosition.x;
     const deltaY = e.clientY - previousMousePosition.y;
 
-    targetRotationY -= deltaX * 0.006;
-    targetRotationX += deltaY * 0.006;
-    targetRotationX = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, targetRotationX));
+    applyOrbitDrag(deltaX, deltaY, e.shiftKey);
 
     previousMousePosition = { x: e.clientX, y: e.clientY };
   });
@@ -1866,9 +2418,7 @@ function setup360OrbitControls() {
     const deltaX = e.touches[0].clientX - previousMousePosition.x;
     const deltaY = e.touches[0].clientY - previousMousePosition.y;
 
-    targetRotationY -= deltaX * 0.006;
-    targetRotationX += deltaY * 0.006;
-    targetRotationX = Math.max(-Math.PI / 2.05, Math.min(Math.PI / 2.05, targetRotationX));
+    applyOrbitDrag(deltaX, deltaY);
 
     previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
   });
@@ -2101,10 +2651,12 @@ function updateActiveComment(deltaTime) {
 }
 
 // 5. Render Loop
-function animate() {
+function animate(timestamp) {
   requestAnimationFrame(animate);
 
-  const time = Date.now() * 0.001;
+  const frameTimestamp = typeof timestamp === 'number' ? timestamp : performance.now();
+  updateBenchmarkFps(frameTimestamp);
+  const time = frameTimestamp * 0.001;
 
   currentRotationX += (targetRotationX - currentRotationX) * 0.06;
   currentRotationY += (targetRotationY - currentRotationY) * 0.06;
@@ -2116,13 +2668,21 @@ function animate() {
     focusedPlanetEntry.mesh.getWorldPosition(orbitCenter);
   } else if (cameraFocusTarget === FOCUS_GALAXY && focusedGalaxyEntry) {
     orbitCenter.copy(focusedGalaxyEntry.group.position);
+  } else if (cameraFocusTarget === FOCUS_BENCHMARK && benchmarkSphereGroup) {
+    orbitCenter.copy(benchmarkSphereGroup.position);
   } else if (cameraFocusTarget === FOCUS_SOLAR_SYSTEM && solarSystemGroup) {
     orbitCenter.copy(solarSystemGroup.position);
   }
 
-  const orbitX = cameraDistance * Math.sin(currentRotationY) * Math.cos(currentRotationX);
-  const orbitY = cameraDistance * Math.sin(currentRotationX);
-  const orbitZ = cameraDistance * Math.cos(currentRotationY) * Math.cos(currentRotationX);
+  const cameraOrbitRotationX = cameraFocusTarget === FOCUS_BENCHMARK
+    ? benchmarkCameraRotationX
+    : currentRotationX;
+  const cameraOrbitRotationY = cameraFocusTarget === FOCUS_BENCHMARK
+    ? benchmarkCameraRotationY
+    : currentRotationY;
+  const orbitX = cameraDistance * Math.sin(cameraOrbitRotationY) * Math.cos(cameraOrbitRotationX);
+  const orbitY = cameraDistance * Math.sin(cameraOrbitRotationX);
+  const orbitZ = cameraDistance * Math.cos(cameraOrbitRotationY) * Math.cos(cameraOrbitRotationX);
 
   const desiredPos = new THREE.Vector3(
     orbitCenter.x + orbitX,
@@ -2138,6 +2698,26 @@ function animate() {
   galaxyEntries.forEach((galaxy, index) => {
     galaxy.group.rotation.y += 0.00018 + index * 0.00004;
   });
+
+  if (benchmarkSphereGroup) {
+    if (cameraFocusTarget === FOCUS_BENCHMARK) {
+      benchmarkSphereGroup.rotation.x += (benchmarkTargetRotationX - benchmarkSphereGroup.rotation.x) * 0.12;
+      benchmarkSphereGroup.rotation.y += (benchmarkTargetRotationY - benchmarkSphereGroup.rotation.y) * 0.12;
+      benchmarkSphereGroup.rotation.z += (benchmarkTargetRotationZ - benchmarkSphereGroup.rotation.z) * 0.12;
+    } else {
+      benchmarkSphereGroup.rotation.y += 0.00018;
+      benchmarkSphereGroup.rotation.x = Math.sin(time * 0.22) * 0.12;
+    }
+    benchmarkShaderMaterials.forEach((material, index) => {
+      if (!material.uniforms) return;
+      // Give each shader layer a different clock and drifting phase so the
+      // gradient remains visibly asynchronous across the fractal shell.
+      if (material.uniforms.uTime) material.uniforms.uTime.value = time * (1 + index * 0.075);
+      if (material.uniforms.uGradientOffset) {
+        material.uniforms.uGradientOffset.value = (index * 3.41 + time * (0.11 + index * 0.067)) % (Math.PI * 2);
+      }
+    });
+  }
 
   galaxyNeutronStars.forEach((star, index) => {
     star.rotation.y += 0.012;

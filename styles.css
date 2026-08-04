@@ -433,6 +433,60 @@ main {
   height: 15px;
 }
 
+/* Fractal benchmark readout */
+.benchmark-fps {
+  position: fixed;
+  top: 112px;
+  left: 28px;
+  display: grid;
+  min-width: 146px;
+  gap: 4px;
+  padding: 12px 14px;
+  color: #e0f2fe;
+  background: linear-gradient(145deg, rgba(8, 20, 45, 0.9), rgba(21, 10, 45, 0.82));
+  border: 1px solid rgba(125, 211, 252, 0.34);
+  border-radius: 14px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35), 0 0 24px rgba(34, 211, 238, 0.12);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  z-index: 9;
+  pointer-events: none;
+}
+
+.benchmark-fps[hidden] {
+  display: none;
+}
+
+.benchmark-fps-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #67e8f9;
+  font-family: var(--font-display);
+  font-size: 0.61rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+
+.benchmark-fps-heading svg {
+  width: 14px;
+  height: 14px;
+}
+
+.benchmark-fps strong {
+  color: #f8fafc;
+  font-family: 'Share Tech Mono', 'Fira Code', monospace;
+  font-size: 1.55rem;
+  line-height: 1;
+  letter-spacing: 0.02em;
+}
+
+.benchmark-fps-detail {
+  color: #a5b4fc;
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -867,6 +921,12 @@ footer a {
     left: 14px;
     width: auto;
   }
+
+  .benchmark-fps {
+    top: 208px;
+    left: 14px;
+  }
+
   .nav-links {
     display: none;
   }

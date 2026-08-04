@@ -21,6 +21,16 @@
   <!-- WebGL Background Canvas -->
   <div id="canvas-container"></div>
 
+  <!-- Visible only while the fractal GPU benchmark is in focus. -->
+  <aside id="benchmark-fps" class="benchmark-fps" aria-live="polite" hidden>
+    <div class="benchmark-fps-heading">
+      <i data-lucide="gauge" aria-hidden="true"></i>
+      <span>GPU BENCHMARK</span>
+    </div>
+    <strong id="benchmark-fps-value">-- FPS</strong>
+    <span id="benchmark-fps-detail">Đang chờ khung hình WebGL...</span>
+  </aside>
+
   <!-- Floating Navigation Bar -->
   <div class="navbar-container">
     <nav class="navbar">
@@ -77,6 +87,7 @@
           <select id="celestial-target" class="target-select">
             <option value="" selected disabled>Chọn thiên thể...</option>
             <option value="neutron">Sao Neutron</option>
+            <option value="benchmark-fractal">Fractal GPU Benchmark</option>
           </select>
           <button type="button" id="focus-target" class="btn-focus-target">
             <i data-lucide="crosshair"></i>
