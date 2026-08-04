@@ -177,11 +177,14 @@ def create_comment_in_storage(storage, comment):
     payload = {'mutations': [{'create': {'_type': 'comment', 'name': comment['name'], 'text': comment['text'], 'createdAt': datetime.datetime.utcnow().isoformat()}}]}
     result = sanity_request(storage, f"/data/mutate/{urlparse.quote(storage['dataset'])}?returnIds=true", method='POST', json_body=payload)
     ids = result.get('result', [])
+    created_at = payload['mutations'][0]['create']['createdAt']
     return {
         'id': ids[0].get('_id') if ids else None,
         'name': comment['name'],
         'text': comment['text'],
-        'created_at': payload['mutations'][0]['create']['createdAt']
+        'created_at': created_at,
+        'storage_id': storage['id'],
+        'storage_label': f"Sanity #{storage['id']} ({storage.get('projectId', 'unknown')})"
     }
 
 
@@ -207,20 +210,25 @@ def list_comments_from_storage_manager():
     all_comments = []
     for storage in get_configured_sanity_storages():
         try:
-            all_comments.extend(get_comments_from_storage(storage))
+            comments = get_comments_from_storage(storage)
+            for comment in comments:
+                comment['storage_id'] = storage['id']
+                comment['storage_label'] = f"Sanity #{storage['id']}"
+                all_comments.append(comment)
         except Exception as exc:
             print(f'Unable to read from Sanity storage {storage["id"]}: {exc}')
     return sorted(all_comments, key=lambda item: item.get('created_at') or '', reverse=True)[:100]
 
 
 def get_comments_from_configured_backends():
-    if get_configured_sanity_storages():
+    storages = get_configured_sanity_storages()
+    if storages:
         try:
             comments = list_comments_from_storage_manager()
-            if comments:
-                return comments
+            return comments
         except Exception as exc:
             print(f'Unable to read comments from Sanity backend: {exc}')
+            return []
 
     if not pool:
         return []

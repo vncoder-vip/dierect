@@ -217,7 +217,9 @@
         name.textContent = comment.name || 'Không tên';
         const text = document.createElement('p');
         text.textContent = comment.text || '';
-        content.append(name, text);
+        const meta = document.createElement('small');
+        meta.textContent = comment.storage_label || comment.storage_id ? `Đã lưu trên ${comment.storage_label || \`Sanity #${comment.storage_id || 'unknown'}\`}` : 'Đã lưu trên Sanity';
+        content.append(name, text, meta);
 
         const deleteButton = document.createElement('button');
         deleteButton.type = 'button';

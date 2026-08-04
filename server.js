@@ -204,11 +204,14 @@ async function createCommentInStorage(storage, comment) {
     body: payload
   });
   const ids = Array.isArray(result?.result) ? result.result : [];
+  const createdAt = payload.mutations[0].create.createdAt;
   return {
     id: ids[0]?._id || null,
     name: comment.name,
     text: comment.text,
-    created_at: new Date().toISOString()
+    created_at: createdAt,
+    storage_id: storage.id,
+    storage_label: `Sanity #${storage.id} (${storage.projectId || 'unknown'})`
   };
 }
 
@@ -244,7 +247,11 @@ async function listCommentsFromStorageManager() {
   for (const storage of storages) {
     try {
       const comments = await getCommentsFromStorage(storage);
-      allComments.push(...comments);
+      for (const comment of comments) {
+        comment.storage_id = storage.id;
+        comment.storage_label = `Sanity #${storage.id}`;
+        allComments.push(comment);
+      }
     } catch (error) {
       console.warn(`Unable to read from Sanity storage ${storage.id}:`, error.message);
     }
@@ -392,11 +399,10 @@ async function readCommentsFromConfiguredBackends() {
   if (storages.length) {
     try {
       const comments = await listCommentsFromStorageManager();
-      if (comments.length > 0) {
-        return comments;
-      }
+      return comments;
     } catch (error) {
-      console.warn('Unable to read comments from Sanity, falling back to Postgres:', error.message);
+      console.warn('Unable to read comments from Sanity:', error.message);
+      return [];
     }
   }
 

@@ -36,7 +36,8 @@ async function loadRemoteComments() {
       ? comments
         .map((comment) => ({
           name: String(comment?.name || '').trim().slice(0, 24),
-          text: String(comment?.text || '').trim().slice(0, 120)
+          text: String(comment?.text || '').trim().slice(0, 120),
+          storage_label: String(comment?.storage_label || comment?.storage_id ? `Sanity #${comment?.storage_id || 'unknown'}` : '').trim()
         }))
         .filter((comment) => comment.name && comment.text)
       : [];
@@ -232,7 +233,7 @@ let raycaster;
 let mouse = new THREE.Vector2();
 
 // 1. Create Canvas Messenger Bubble Texture — supports multi-line text
-function createMessengerBubbleCanvas(name, text) {
+function createMessengerBubbleCanvas(name, text, storageLabel = '') {
   const MAX_WIDTH = 800;
   const LINE_HEIGHT = 28;
   const PADDING_X = 24;
@@ -245,7 +246,8 @@ function createMessengerBubbleCanvas(name, text) {
   const measureCtx = measureCanvas.getContext('2d');
   measureCtx.font = '500 21px "Plus Jakarta Sans", sans-serif';
   const maxTextWidth = MAX_WIDTH - BUBBLE_MARGIN * 2 - PADDING_X * 2;
-  const words = text.split(' ');
+  const displayText = storageLabel ? `${text}\n\n[${storageLabel}]` : text;
+  const words = displayText.split(' ');
   const lines = [];
   let currentLine = '';
   for (const word of words) {
@@ -1737,7 +1739,7 @@ function startNextComment() {
   activeCommentIndex = (activeCommentIndex + 1) % commentQueue.length;
   const entry = commentQueue[activeCommentIndex];
 
-  const canvas = createMessengerBubbleCanvas(entry.name, entry.text);
+  const canvas = createMessengerBubbleCanvas(entry.name, entry.text, entry.storage_label || '');
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
 
