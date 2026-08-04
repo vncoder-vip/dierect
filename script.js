@@ -28,8 +28,13 @@ function loadStoredCommentSamples() {
 loadStoredCommentSamples();
 
 async function loadRemoteComments() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch('/api/comments');
+    const response = await fetch('/api/comments', {
+      cache: 'no-store',
+      signal: controller.signal
+    });
     if (!response.ok) return [];
     const comments = await response.json();
     return Array.isArray(comments)
@@ -37,12 +42,14 @@ async function loadRemoteComments() {
         .map((comment) => ({
           name: String(comment?.name || '').trim().slice(0, 24),
           text: String(comment?.text || '').trim().slice(0, 120),
-          storage_label: String(comment?.storage_label || comment?.storage_id ? `Sanity #${comment?.storage_id || 'unknown'}` : '').trim()
+          storage_label: String(comment?.storage_label || (comment?.storage_id ? `Sanity #${comment.storage_id}` : '')).trim()
         }))
         .filter((comment) => comment.name && comment.text)
       : [];
   } catch {
     return [];
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -1397,10 +1404,18 @@ async function initThree() {
   createHollywoodBlackHole();
   createDistantNeutronStar();
   createSolarSystem();
-  const remoteComments = await loadRemoteComments();
-  if (remoteComments.length) initialComments.push(...remoteComments.slice(-12));
   buildCommentQueue();
   setTimeout(startNextComment, 1000);
+
+  // Do not hold WebGL setup, controls, or the first render hostage to a
+  // serverless/API request. Comments are merged when the request completes.
+  loadRemoteComments().then((remoteComments) => {
+    if (!remoteComments.length) return;
+    const hadComments = commentQueue.length > 0;
+    initialComments.push(...remoteComments.slice(-12));
+    buildCommentQueue();
+    if (!hadComments) startNextComment();
+  });
 
   currentRotationX = 0.52;
   targetRotationX = 0.52;

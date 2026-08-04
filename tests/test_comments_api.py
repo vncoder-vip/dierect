@@ -49,3 +49,25 @@ def test_api_returns_empty_list_when_sanity_reads_fail(monkeypatch):
 
     assert response.status_code == 200
     assert response.get_json() == []
+
+
+def test_api_keeps_comments_when_one_sanity_storage_fails(monkeypatch):
+    module = importlib.import_module('api.comments')
+    storages = [
+        {'id': 'primary', 'projectId': 'demo', 'dataset': 'production', 'token': 'token'},
+        {'id': '1', 'projectId': 'unavailable', 'dataset': 'production', 'token': 'token'},
+    ]
+    monkeypatch.setattr(module, 'get_configured_sanity_storages', lambda: storages)
+
+    def fake_get_comments(storage):
+        if storage['id'] == '1':
+            raise TimeoutError('storage timeout')
+        return [{'id': 'comment-1', 'name': 'Alice', 'text': 'Hello', 'created_at': '2024-01-01T00:00:00Z'}]
+
+    monkeypatch.setattr(module, 'get_comments_from_storage', fake_get_comments)
+
+    comments = module.list_comments_from_storage_manager()
+
+    assert len(comments) == 1
+    assert comments[0]['storage_id'] == 'primary'
+    assert comments[0]['storage_label'] == 'Sanity #primary'
