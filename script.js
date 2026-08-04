@@ -2,6 +2,7 @@
 lucide.createIcons();
 
 const initialComments = [];
+let activePreviewObjectUrl = null;
 
 const COMMENT_EDITOR_STORAGE_KEY = 'directchat-comment-samples';
 
@@ -44,19 +45,6 @@ async function loadRemoteComments() {
   }
 }
 
-async function saveCommentToDatabase(comment) {
-  try {
-    const response = await fetch('/api/comments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(comment)
-    });
-    return response.ok ? await response.json() : null;
-  } catch {
-    return null;
-  }
-}
-
 function sanitizeMediaPreview(url) {
   if (!url) return '';
   try {
@@ -64,6 +52,41 @@ function sanitizeMediaPreview(url) {
     return parsed.href;
   } catch {
     return '';
+  }
+}
+
+function revokeActivePreviewObjectUrl() {
+  if (activePreviewObjectUrl) {
+    URL.revokeObjectURL(activePreviewObjectUrl);
+    activePreviewObjectUrl = null;
+  }
+}
+
+function getSelectedMediaFile() {
+  const fileInput = document.getElementById('media-file');
+  return fileInput && fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+}
+
+function inferMediaTypeFromFile(file) {
+  if (!file) return '';
+  if (file.type?.startsWith('image/')) return 'image';
+  if (file.type?.startsWith('video/')) return 'video';
+  const name = String(file.name || '').toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(name)) return 'image';
+  if (/\.(mp4|webm|ogg|mov|m4v)$/i.test(name)) return 'video';
+  return '';
+}
+
+async function saveCommentToDatabase(payload, isFormData = false) {
+  try {
+    const response = await fetch('/api/comments', {
+      method: 'POST',
+      headers: isFormData ? {} : { 'Content-Type': 'application/json' },
+      body: isFormData ? payload : JSON.stringify(payload)
+    });
+    return response.ok ? await response.json() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -1896,7 +1919,9 @@ function updatePreview() {
   const nameVal = document.getElementById('user-name').value.trim();
   const msgVal = document.getElementById('user-msg').value.trim();
   const mediaUrl = sanitizeMediaPreview(document.getElementById('media-url').value.trim());
-  const mediaType = document.getElementById('media-type').value;
+  const mediaTypeSelect = document.getElementById('media-type');
+  const selectedFile = getSelectedMediaFile();
+  const fileMediaType = inferMediaTypeFromFile(selectedFile);
   const previewText = document.getElementById('text-preview');
   const previewBox = document.querySelector('.msg-bubble-preview');
 
@@ -1904,18 +1929,21 @@ function updatePreview() {
   previewText.innerText = msgVal || 'Chuột Chat đỉnh cao ghê! 🚀';
   document.getElementById('avatar-preview').innerText = (nameVal || 'M').charAt(0).toUpperCase();
 
-  if (mediaUrl && mediaType === 'image') {
+  if (selectedFile && fileMediaType) {
+    if (mediaTypeSelect && !mediaTypeSelect.value) mediaTypeSelect.value = fileMediaType;
+    revokeActivePreviewObjectUrl();
+    activePreviewObjectUrl = URL.createObjectURL(selectedFile);
+    previewText.innerHTML = `${previewText.innerText}<br>${fileMediaType === 'image' ? `<img src="${activePreviewObjectUrl}" alt="preview" style="max-width:100%;margin-top:8px;border-radius:10px;" />` : `<video controls src="${activePreviewObjectUrl}" style="max-width:100%;margin-top:8px;border-radius:10px;"></video>`}`;
+  } else if (mediaUrl && mediaTypeSelect.value === 'image') {
     previewText.innerHTML = `${previewText.innerText}<br><img src="${mediaUrl}" alt="preview" style="max-width:100%;margin-top:8px;border-radius:10px;" />`;
-  } else if (mediaUrl && mediaType === 'video') {
+  } else if (mediaUrl && mediaTypeSelect.value === 'video') {
     previewText.innerHTML = `${previewText.innerText}<br><video controls src="${mediaUrl}" style="max-width:100%;margin-top:8px;border-radius:10px;"></video>`;
-  }
-
-  if (!mediaUrl) {
+  } else {
     previewText.innerHTML = previewText.innerText;
   }
 
   if (previewBox) {
-    previewBox.style.minHeight = mediaUrl ? '220px' : 'auto';
+    previewBox.style.minHeight = (mediaUrl || selectedFile) ? '220px' : 'auto';
   }
 }
 
@@ -1925,25 +1953,40 @@ async function handleCommentSubmit(event) {
   const msgInput = document.getElementById('user-msg');
   const mediaUrlInput = document.getElementById('media-url');
   const mediaTypeInput = document.getElementById('media-type');
+  const mediaFileInput = document.getElementById('media-file');
 
   const name = nameInput.value.trim();
   const text = msgInput.value.trim();
   const mediaUrl = mediaUrlInput.value.trim();
-  const mediaType = mediaTypeInput.value;
+  const selectedFile = getSelectedMediaFile();
+  const fileMediaType = inferMediaTypeFromFile(selectedFile);
+  const mediaType = (fileMediaType || mediaTypeInput.value || '').toLowerCase();
 
   if (name && text) {
-    const payload = {
-      name,
-      text,
-      media_type: mediaType || '',
-      media_url: mediaType === 'image' || mediaType === 'video' ? mediaUrl : ''
-    };
-    const savedComment = await saveCommentToDatabase(payload);
+    let savedComment = null;
+    if (selectedFile && fileMediaType) {
+      const formData = new FormData();
+      formData.append('name', name);
+      formData.append('text', text);
+      formData.append('media_type', mediaType);
+      formData.append('media_url', mediaUrl);
+      formData.append('media_file', selectedFile);
+      savedComment = await saveCommentToDatabase(formData, true);
+    } else {
+      const payload = {
+        name,
+        text,
+        media_type: mediaType || '',
+        media_url: mediaType === 'image' || mediaType === 'video' ? mediaUrl : ''
+      };
+      savedComment = await saveCommentToDatabase(payload);
+    }
+
     const newComment = {
       name: savedComment?.name || name,
       text: savedComment?.text || text,
-      media_type: savedComment?.media_type || payload.media_type,
-      media_url: savedComment?.media_url || payload.media_url,
+      media_type: savedComment?.media_type || mediaType,
+      media_url: savedComment?.media_url || (mediaType === 'image' || mediaType === 'video' ? mediaUrl : ''),
       index: commentQueue.length
     };
     commentQueue.push(newComment);
@@ -1952,6 +1995,8 @@ async function handleCommentSubmit(event) {
     msgInput.value = '';
     mediaUrlInput.value = '';
     mediaTypeInput.value = '';
+    if (mediaFileInput) mediaFileInput.value = '';
+    revokeActivePreviewObjectUrl();
     updatePreview();
     updateCommentCountDisplay();
 

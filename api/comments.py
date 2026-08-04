@@ -7,6 +7,8 @@ import requests
 
 app = Flask(__name__)
 
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), '..', 'uploads')
+os.makedirs(UPLOADS_DIR, exist_ok=True)
 MAX_BODY_BYTES = 16 * 1024
 DEFAULT_SANITY_API_VERSION = '2026-07-28'
 DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000
@@ -63,6 +65,19 @@ def normalise_comment(input_data):
     if not media_type:
         media_url = ''
     return {'name': name, 'text': text, 'media_type': media_type, 'media_url': media_url}
+
+
+def save_uploaded_media(uploaded_file):
+    if not uploaded_file or not uploaded_file.filename:
+        return None
+    filename = os.path.basename(uploaded_file.filename)
+    safe_name = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '-' for ch in filename)
+    safe_name = safe_name.strip('-.') or 'upload'
+    target_path = os.path.join(UPLOADS_DIR, f"{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{safe_name}")
+    uploaded_file.save(target_path)
+    rel_path = f"/uploads/{os.path.basename(target_path)}"
+    media_type = 'image' if uploaded_file.mimetype and uploaded_file.mimetype.startswith('image/') else 'video' if uploaded_file.mimetype and uploaded_file.mimetype.startswith('video/') else ''
+    return {'media_type': media_type, 'media_url': rel_path}
 
 
 def get_env_value(name, fallback=''):
@@ -200,15 +215,27 @@ def comments_postgres():
         finally:
             pool.putconn(conn)
 
-    data = request.get_data(as_text=True) or '{}'
-    if len(data.encode('utf8')) > MAX_BODY_BYTES:
-        return jsonify({'error': 'Payload too large'}), 413
-    try:
-        body = json.loads(data)
-    except Exception:
-        return jsonify({'error': 'Invalid JSON'}), 400
-
     if request.method == 'POST':
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            body = {
+                'name': request.form.get('name', ''),
+                'text': request.form.get('text', ''),
+                'media_type': request.form.get('media_type', ''),
+                'media_url': request.form.get('media_url', '')
+            }
+            uploaded = save_uploaded_media(request.files.get('media_file'))
+            if uploaded:
+                body['media_type'] = body.get('media_type') or uploaded['media_type']
+                body['media_url'] = uploaded['media_url'] or body.get('media_url')
+        else:
+            data = request.get_data(as_text=True) or '{}'
+            if len(data.encode('utf8')) > MAX_BODY_BYTES:
+                return jsonify({'error': 'Payload too large'}), 413
+            try:
+                body = json.loads(data)
+            except Exception:
+                return jsonify({'error': 'Invalid JSON'}), 400
+
         comment = normalise_comment(body)
         if not comment:
             return jsonify({'error': 'Name and message are required'}), 400
@@ -232,15 +259,27 @@ def comments_sanity():
     if request.method == 'GET':
         return jsonify(list_comments_from_storage_manager()), 200
 
-    data = request.get_data(as_text=True) or '{}'
-    if len(data.encode('utf8')) > MAX_BODY_BYTES:
-        return jsonify({'error': 'Payload too large'}), 413
-    try:
-        body = json.loads(data)
-    except Exception:
-        return jsonify({'error': 'Invalid JSON'}), 400
-
     if request.method == 'POST':
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            body = {
+                'name': request.form.get('name', ''),
+                'text': request.form.get('text', ''),
+                'media_type': request.form.get('media_type', ''),
+                'media_url': request.form.get('media_url', '')
+            }
+            uploaded = save_uploaded_media(request.files.get('media_file'))
+            if uploaded:
+                body['media_type'] = body.get('media_type') or uploaded['media_type']
+                body['media_url'] = uploaded['media_url'] or body.get('media_url')
+        else:
+            data = request.get_data(as_text=True) or '{}'
+            if len(data.encode('utf8')) > MAX_BODY_BYTES:
+                return jsonify({'error': 'Payload too large'}), 413
+            try:
+                body = json.loads(data)
+            except Exception:
+                return jsonify({'error': 'Invalid JSON'}), 400
+
         comment = normalise_comment(body)
         if not comment:
             return jsonify({'error': 'Name and message are required'}), 400

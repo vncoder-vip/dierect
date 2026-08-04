@@ -5,6 +5,7 @@ const { Pool } = require('pg');
 
 const PORT = Number(process.env.PORT || 10000);
 const ROOT = __dirname;
+const UPLOADS_DIR = path.join(ROOT, 'uploads');
 const MAX_BODY_BYTES = 16 * 1024;
 const DEFAULT_SANITY_API_VERSION = '2026-07-28';
 const DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000;
@@ -16,8 +17,13 @@ const contentTypes = {
   '.jpg': 'image/jpeg',
   '.js': 'text/javascript; charset=utf-8',
   '.mp3': 'audio/mpeg',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.ogg': 'video/ogg',
   '.png': 'image/png',
-  '.svg': 'image/svg+xml'
+  '.svg': 'image/svg+xml',
+  '.webm': 'video/webm',
+  '.webp': 'image/webp'
 };
 
 function parseEnvContent(content) {
@@ -47,6 +53,10 @@ function loadEnvFile(envFilePath = path.join(ROOT, '.env')) {
 }
 
 loadEnvFile();
+
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
 
 function getEnvValue(name, fallback = '') {
   return process.env[name] ?? fallback;
@@ -251,26 +261,95 @@ function sendJson(response, status, payload) {
   response.end(JSON.stringify(payload));
 }
 
-function readJson(request) {
+function readRequestBody(request) {
   return new Promise((resolve, reject) => {
-    let body = '';
-    request.setEncoding('utf8');
+    const chunks = [];
     request.on('data', (chunk) => {
-      body += chunk;
-      if (Buffer.byteLength(body, 'utf8') > MAX_BODY_BYTES) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      const totalBytes = chunks.reduce((sum, part) => sum + part.length, 0);
+      if (totalBytes > MAX_BODY_BYTES) {
         reject(Object.assign(new Error('Payload too large'), { statusCode: 413 }));
         request.destroy();
       }
     });
-    request.on('end', () => {
-      try {
-        resolve(JSON.parse(body || '{}'));
-      } catch {
-        reject(Object.assign(new Error('Invalid JSON'), { statusCode: 400 }));
-      }
-    });
+    request.on('end', () => resolve(Buffer.concat(chunks)));
     request.on('error', reject);
   });
+}
+
+function parseJsonBody(rawBody) {
+  try {
+    return JSON.parse(rawBody.toString('utf8') || '{}');
+  } catch {
+    throw Object.assign(new Error('Invalid JSON'), { statusCode: 400 });
+  }
+}
+
+function sanitizeFileName(name) {
+  const cleanName = String(name || 'upload').replace(/[^a-zA-Z0-9._-]/g, '-');
+  const safeName = cleanName.replace(/-+/g, '-').replace(/^[-.]+|[-.]+$/g, '');
+  return safeName || 'upload';
+}
+
+function inferMediaTypeFromMime(mimeType, fileName = '') {
+  if (mimeType?.startsWith('image/')) return 'image';
+  if (mimeType?.startsWith('video/')) return 'video';
+  const lowerName = String(fileName).toLowerCase();
+  if (/\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(lowerName)) return 'image';
+  if (/\.(mp4|webm|ogg|mov|m4v)$/i.test(lowerName)) return 'video';
+  return '';
+}
+
+function parseMultipartFormData(rawBody, contentType) {
+  const boundaryMatch = contentType.match(/boundary=(.+)$/i);
+  if (!boundaryMatch) return null;
+
+  const boundary = Buffer.from(`--${boundaryMatch[1]}`);
+  const parts = [];
+  let start = 0;
+
+  while (true) {
+    const boundaryIndex = rawBody.indexOf(boundary, start);
+    if (boundaryIndex === -1) break;
+    if (boundaryIndex !== 0) {
+      start = boundaryIndex + boundary.length;
+      continue;
+    }
+
+    const nextBoundaryIndex = rawBody.indexOf(boundary, boundary.length);
+    if (nextBoundaryIndex === -1) break;
+
+    const partBuffer = rawBody.subarray(boundary.length, nextBoundaryIndex);
+    const separatorIndex = partBuffer.indexOf(Buffer.from('\r\n\r\n'));
+    const headerBuffer = separatorIndex >= 0 ? partBuffer.subarray(0, separatorIndex) : Buffer.alloc(0);
+    let bodyBuffer = separatorIndex >= 0 ? partBuffer.subarray(separatorIndex + 4) : partBuffer;
+    if (bodyBuffer.length >= 2 && bodyBuffer[bodyBuffer.length - 2] === 13 && bodyBuffer[bodyBuffer.length - 1] === 10) {
+      bodyBuffer = bodyBuffer.subarray(0, bodyBuffer.length - 2);
+    }
+
+    const headersText = headerBuffer.toString('utf8');
+    const dispositionMatch = headersText.match(/name="([^"]+)"(?:;\s*filename="([^"]*)")?/i);
+    if (dispositionMatch) {
+      const fieldName = dispositionMatch[1];
+      const fileName = dispositionMatch[2] || '';
+      const contentTypeHeader = headersText.match(/Content-Type:\s*([^\r\n]+)/i)?.[1]?.trim() || '';
+      parts.push({ fieldName, fileName, contentTypeHeader, bodyBuffer });
+    }
+
+    start = nextBoundaryIndex + boundary.length;
+    if (rawBody.indexOf(boundary, start) === -1) break;
+  }
+
+  return parts;
+}
+
+function saveUploadedFile(fileName, contentTypeHeader, bodyBuffer) {
+  const extension = path.extname(fileName || '');
+  const safeBaseName = sanitizeFileName(fileName || `upload${extension || ''}`);
+  const filePath = path.join(UPLOADS_DIR, `${Date.now()}-${Math.random().toString(36).slice(2)}-${safeBaseName}`);
+  fs.writeFileSync(filePath, bodyBuffer);
+  const publicUrl = `/uploads/${path.basename(filePath)}`;
+  return { filePath, publicUrl, mediaType: inferMediaTypeFromMime(contentTypeHeader || '', fileName) };
 }
 
 function normaliseComment(input) {
@@ -296,7 +375,33 @@ async function handleComments(request, response) {
     }
 
     if (request.method === 'POST') {
-      const comment = normaliseComment(await readJson(request));
+      const contentTypeHeader = request.headers['content-type'] || '';
+      let payload = { name: '', text: '', media_type: '', media_url: '' };
+
+      if (contentTypeHeader.includes('multipart/form-data')) {
+        const rawBody = await readRequestBody(request);
+        const parts = parseMultipartFormData(rawBody, contentTypeHeader);
+        const fields = {};
+        let uploadedFile = null;
+        for (const part of parts || []) {
+          if (part.fileName) {
+            uploadedFile = saveUploadedFile(part.fileName, part.contentTypeHeader, part.bodyBuffer);
+          } else {
+            fields[part.fieldName] = part.bodyBuffer.toString('utf8');
+          }
+        }
+        payload = {
+          name: fields.name || '',
+          text: fields.text || '',
+          media_type: fields.media_type || uploadedFile?.mediaType || '',
+          media_url: uploadedFile?.publicUrl || fields.media_url || ''
+        };
+      } else {
+        const rawBody = await readRequestBody(request);
+        payload = parseJsonBody(rawBody);
+      }
+
+      const comment = normaliseComment(payload);
       if (!comment) return sendJson(response, 400, { error: 'Name and message are required' });
       const result = await pool.query(
         'INSERT INTO comments (name, text, media_type, media_url) VALUES ($1, $2, $3, $4) RETURNING id, name, text, media_type, media_url, created_at',
@@ -320,7 +425,33 @@ async function handleComments(request, response) {
   }
 
   if (request.method === 'POST') {
-    const comment = normaliseComment(await readJson(request));
+    const contentTypeHeader = request.headers['content-type'] || '';
+    let payload = { name: '', text: '', media_type: '', media_url: '' };
+
+    if (contentTypeHeader.includes('multipart/form-data')) {
+      const rawBody = await readRequestBody(request);
+      const parts = parseMultipartFormData(rawBody, contentTypeHeader);
+      const fields = {};
+      let uploadedFile = null;
+      for (const part of parts || []) {
+        if (part.fileName) {
+          uploadedFile = saveUploadedFile(part.fileName, part.contentTypeHeader, part.bodyBuffer);
+        } else {
+          fields[part.fieldName] = part.bodyBuffer.toString('utf8');
+        }
+      }
+      payload = {
+        name: fields.name || '',
+        text: fields.text || '',
+        media_type: fields.media_type || uploadedFile?.mediaType || '',
+        media_url: uploadedFile?.publicUrl || fields.media_url || ''
+      };
+    } else {
+      const rawBody = await readRequestBody(request);
+      payload = parseJsonBody(rawBody);
+    }
+
+    const comment = normaliseComment(payload);
     if (!comment) return sendJson(response, 400, { error: 'Name and message are required' });
     try {
       const created = await persistCommentWithStorageManager(comment);
