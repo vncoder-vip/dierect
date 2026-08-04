@@ -2,119 +2,17 @@ import os
 import json
 import datetime
 import urllib.parse as urlparse
-from flask import Flask, request, jsonify
-import requests
+import urllib.request
+from http.server import BaseHTTPRequestHandler
 
-app = Flask(__name__)
-
-
-@app.errorhandler(Exception)
-def handle_unexpected_error(exc):
-    import traceback
-    traceback.print_exc()
-    return jsonify({'error': 'Internal server error', 'detail': str(exc)}), 500
-
-
-# On Vercel the function filesystem is read-only except for /tmp.
-# Fall back to a local uploads dir in development, but never crash at import.
-UPLOADS_DIR = os.environ.get('VERCEL') and '/tmp/uploads' or os.path.join(os.path.dirname(__file__), '..', 'uploads')
-try:
-    os.makedirs(UPLOADS_DIR, exist_ok=True)
-except OSError:
-    # Read-only filesystem (e.g. Vercel) — uploads will be disabled gracefully.
-    UPLOADS_DIR = '/tmp/uploads'
-    try:
-        os.makedirs(UPLOADS_DIR, exist_ok=True)
-    except OSError:
-        UPLOADS_DIR = None
+# ---- Configuration ----
 MAX_BODY_BYTES = 16 * 1024
 DEFAULT_SANITY_API_VERSION = '2024-03-19'
 DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000
 SANITY_API_VERSION_CANDIDATES = ['2024-03-19', '2023-11-21', '2025-03-19', '2026-07-28']
 
 
-def parse_env_file(env_path):
-    if not os.path.exists(env_path):
-        return {}
-    parsed = {}
-    try:
-        with open(env_path, encoding='utf-8') as handle:
-            for line in handle.read().splitlines():
-                stripped = line.strip()
-                if not stripped or stripped.startswith('#') or '=' not in stripped:
-                    continue
-                key, value = stripped.split('=', 1)
-                key = key.strip()
-                value = value.strip()
-                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                    value = value[1:-1]
-                parsed[key] = value
-    except OSError:
-        return {}
-    return parsed
-
-
-def load_env():
-    env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
-    for key, value in parse_env_file(env_path).items():
-        os.environ[key] = value
-
-
-load_env()
-
-# Postgres optional
-DATABASE_URL = os.environ.get('DATABASE_URL')
-pool = None
-if DATABASE_URL:
-    try:
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
-        from psycopg2 import pool as pgpool
-        pool = pgpool.SimpleConnectionPool(1, 10, dsn=DATABASE_URL)
-    except Exception:
-        pool = None
-
-
-def normalise_comment(input_data):
-    name = str((input_data.get('name') if isinstance(input_data, dict) else '') or '').strip()[:24]
-    text = str((input_data.get('text') if isinstance(input_data, dict) else '') or '').strip()[:120]
-    media_type = str((input_data.get('media_type') if isinstance(input_data, dict) else '') or '').strip().lower()
-    media_url = str((input_data.get('media_url') if isinstance(input_data, dict) else '') or '').strip()
-    if not name or not text:
-        return None
-    if media_type not in {'image', 'video'}:
-        media_type = ''
-    if not media_type:
-        media_url = ''
-    return {'name': name, 'text': text, 'media_type': media_type, 'media_url': media_url}
-
-
-def save_uploaded_media(uploaded_file):
-    if not uploaded_file or not uploaded_file.filename:
-        return None
-    if not UPLOADS_DIR:
-        # Filesystem is read-only (e.g. Vercel) — media uploads are unavailable.
-        return None
-    filename = os.path.basename(uploaded_file.filename)
-    safe_name = ''.join(ch if ch.isalnum() or ch in {'.', '-', '_'} else '-' for ch in filename)
-    safe_name = safe_name.strip('-.') or 'upload'
-    target_path = os.path.join(UPLOADS_DIR, f"{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{safe_name}")
-    try:
-        uploaded_file.save(target_path)
-    except OSError:
-        return None
-    rel_path = f"/uploads/{os.path.basename(target_path)}"
-    media_type = 'image' if uploaded_file.mimetype and uploaded_file.mimetype.startswith('image/') else 'video' if uploaded_file.mimetype and uploaded_file.mimetype.startswith('video/') else ''
-    return {'media_type': media_type, 'media_url': rel_path}
-
-
-def normalize_sanity_api_version(api_version):
-    value = str(api_version or '').strip()
-    if not value:
-        return DEFAULT_SANITY_API_VERSION
-    return value.lstrip('v')
-
-
+# ---- Environment helpers ----
 def get_env_value(name, fallback=''):
     return os.environ.get(name, fallback)
 
@@ -157,6 +55,14 @@ def get_max_comments_per_storage():
     return max(1, get_env_number('SANITY_MAX_COMMENTS_PER_PROJECT', DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT))
 
 
+def normalize_sanity_api_version(api_version):
+    value = str(api_version or '').strip()
+    if not value:
+        return DEFAULT_SANITY_API_VERSION
+    return value.lstrip('v')
+
+
+# ---- Sanity API helpers (using urllib instead of requests) ----
 def sanity_request(storage, endpoint, method='GET', json_body=None):
     versions = [normalize_sanity_api_version(storage.get('apiVersion') or DEFAULT_SANITY_API_VERSION)]
     versions.extend(SANITY_API_VERSION_CANDIDATES)
@@ -166,14 +72,16 @@ def sanity_request(storage, endpoint, method='GET', json_body=None):
         url = f"https://{storage['projectId']}.api.sanity.io/v{version}{endpoint}"
         headers = {'Authorization': f"Bearer {storage['token']}", 'Content-Type': 'application/json'}
         try:
-            response = requests.request(method, url, headers=headers, json=json_body, timeout=10)
-            if not response.ok:
-                last_exc = RuntimeError(f'Sanity request failed with status {response.status_code} at {url}')
-                continue
-            try:
-                return response.json()
-            except ValueError:
-                return {}
+            data = None
+            if json_body is not None:
+                data = json.dumps(json_body).encode('utf-8')
+            req = urllib.request.Request(url, data=data, headers=headers, method=method)
+            with urllib.request.urlopen(req, timeout=10) as response:
+                body = response.read().decode('utf-8')
+                try:
+                    return json.loads(body)
+                except (ValueError, json.JSONDecodeError):
+                    return {}
         except Exception as exc:
             last_exc = exc
     if last_exc:
@@ -196,7 +104,8 @@ def get_comments_from_storage(storage):
         'name': comment.get('name'),
         'text': comment.get('text'),
         'created_at': comment.get('createdAt'),
-        'storage_id': storage['id']
+        'storage_id': storage['id'],
+        'storage_label': f"Sanity #{storage['id']}"
     } for comment in comments]
 
 
@@ -219,7 +128,6 @@ def persist_comment_with_storage_manager(comment):
     storages = get_configured_sanity_storages()
     if not storages:
         raise RuntimeError('No Sanity storage configured')
-
     max_comments = get_max_comments_per_storage()
     for storage in storages:
         try:
@@ -229,7 +137,6 @@ def persist_comment_with_storage_manager(comment):
             return create_comment_in_storage(storage, comment)
         except Exception as exc:
             print(f'Skipping Sanity storage {storage["id"]}: {exc}')
-
     raise RuntimeError('All configured Sanity storages are full or unavailable')
 
 
@@ -238,182 +145,124 @@ def list_comments_from_storage_manager():
     for storage in get_configured_sanity_storages():
         try:
             comments = get_comments_from_storage(storage)
-            for comment in comments:
-                comment['storage_id'] = storage['id']
-                comment['storage_label'] = f"Sanity #{storage['id']}"
-                all_comments.append(comment)
+            all_comments.extend(comments)
         except Exception as exc:
             print(f'Unable to read from Sanity storage {storage["id"]}: {exc}')
     return sorted(all_comments, key=lambda item: item.get('created_at') or '', reverse=True)[:100]
+
+
+# ---- Comment helpers ----
+def normalise_comment(input_data):
+    name = str((input_data.get('name') if isinstance(input_data, dict) else '') or '').strip()[:24]
+    text = str((input_data.get('text') if isinstance(input_data, dict) else '') or '').strip()[:120]
+    if not name or not text:
+        return None
+    return {'name': name, 'text': text}
 
 
 def get_comments_from_configured_backends():
     storages = get_configured_sanity_storages()
     if storages:
         try:
-            comments = list_comments_from_storage_manager()
-            # Ensure every comment carries storage metadata for the frontend.
-            default_storage_id = storages[0]['id'] if storages else ''
-            for comment in comments:
-                if not comment.get('storage_id'):
-                    comment['storage_id'] = default_storage_id
-                if not comment.get('storage_label'):
-                    comment['storage_label'] = f"Sanity #{comment.get('storage_id', '')}"
-            return comments
+            return list_comments_from_storage_manager()
         except Exception as exc:
             print(f'Unable to read comments from Sanity backend: {exc}')
             return []
-
-    if not pool:
-        return []
-
-    from psycopg2.extras import RealDictCursor
-    conn = pool.getconn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute('SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
-            rows = cur.fetchall()
-        rows.reverse()
-        return rows
-    finally:
-        pool.putconn(conn)
+    return []
 
 
 def persist_comment_to_configured_backends(comment):
     if get_configured_sanity_storages():
+        return persist_comment_with_storage_manager(comment)
+    raise RuntimeError('No backend configured')
+
+
+# ---- Vercel Serverless Function (native Python, no Flask) ----
+class handler(BaseHTTPRequestHandler):
+    def _send_json(self, status, data):
+        body = json.dumps(data, default=str).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _read_body(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > MAX_BODY_BYTES:
+            return None, 'too_large'
+        if content_length == 0:
+            return {}, None
+        raw = self.rfile.read(content_length)
+        content_type = self.headers.get('Content-Type', '')
+        if 'application/json' in content_type:
+            try:
+                return json.loads(raw.decode('utf-8')), None
+            except (ValueError, json.JSONDecodeError):
+                return None, 'invalid_json'
+        # Fallback: try JSON anyway
         try:
-            return persist_comment_with_storage_manager(comment)
+            return json.loads(raw.decode('utf-8')), None
+        except (ValueError, json.JSONDecodeError):
+            return None, 'invalid_json'
+
+    def do_GET(self):
+        try:
+            comments = get_comments_from_configured_backends()
+            self._send_json(200, comments)
         except Exception as exc:
-            print(f'Unable to persist comment to Sanity backend: {exc}')
+            import traceback
+            traceback.print_exc()
+            self._send_json(500, {'error': 'Internal server error', 'detail': str(exc)})
 
-    if not pool:
-        raise RuntimeError('No backend configured')
-
-    from psycopg2.extras import RealDictCursor
-    conn = pool.getconn()
-    try:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            cur.execute(
-                'INSERT INTO comments (name, text, media_type, media_url) VALUES (%s, %s, %s, %s) RETURNING id, name, text, media_type, media_url, created_at',
-                (comment['name'], comment['text'], comment.get('media_type') or None, comment.get('media_url') or None)
-            )
-            created = cur.fetchone()
-            conn.commit()
-        return created
-    finally:
-        pool.putconn(conn)
-
-
-@app.route('/api/comments', methods=['GET', 'POST', 'DELETE'])
-@app.route('/', methods=['GET', 'POST', 'DELETE'])
-def handle():
-    if pool:
-        return comments_postgres()
-    if not get_configured_sanity_storages():
-        return jsonify({'error': 'No backend configured'}), 503
-    return comments_sanity()
-
-
-def comments_postgres():
-    from psycopg2.extras import RealDictCursor
-    if request.method == 'GET':
-        conn = pool.getconn()
+    def do_POST(self):
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute('SELECT id, name, text, media_type, media_url, created_at FROM comments ORDER BY created_at DESC LIMIT 100')
-                rows = cur.fetchall()
-            rows.reverse()
-            return jsonify(rows), 200
-        finally:
-            pool.putconn(conn)
-
-    if request.method == 'POST':
-        if request.content_type and 'multipart/form-data' in request.content_type:
-            body = {
-                'name': request.form.get('name', ''),
-                'text': request.form.get('text', ''),
-                'media_type': request.form.get('media_type', ''),
-                'media_url': request.form.get('media_url', '')
-            }
-            uploaded = save_uploaded_media(request.files.get('media_file'))
-            if uploaded:
-                body['media_type'] = body.get('media_type') or uploaded['media_type']
-                body['media_url'] = uploaded['media_url'] or body.get('media_url')
-        else:
-            data = request.get_data(as_text=True) or '{}'
-            if len(data.encode('utf8')) > MAX_BODY_BYTES:
-                return jsonify({'error': 'Payload too large'}), 413
+            body, err = self._read_body()
+            if err == 'too_large':
+                self._send_json(413, {'error': 'Payload too large'})
+                return
+            if err == 'invalid_json':
+                self._send_json(400, {'error': 'Invalid JSON'})
+                return
+            if body is None:
+                self._send_json(400, {'error': 'Invalid JSON'})
+                return
+            comment = normalise_comment(body)
+            if not comment:
+                self._send_json(400, {'error': 'Name and message are required'})
+                return
+            if not get_configured_sanity_storages():
+                self._send_json(503, {'error': 'No backend configured'})
+                return
             try:
-                body = json.loads(data)
-            except Exception:
-                return jsonify({'error': 'Invalid JSON'}), 400
+                created = persist_comment_to_configured_backends(comment)
+                self._send_json(201, created)
+            except RuntimeError as exc:
+                self._send_json(507, {'error': str(exc)})
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self._send_json(500, {'error': 'Internal server error', 'detail': str(exc)})
 
-        comment = normalise_comment(body)
-        if not comment:
-            return jsonify({'error': 'Name and message are required'}), 400
-        conn = pool.getconn()
+    def do_DELETE(self):
         try:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    'INSERT INTO comments (name, text, media_type, media_url) VALUES (%s, %s, %s, %s) RETURNING id, name, text, media_type, media_url, created_at',
-                    (comment['name'], comment['text'], comment.get('media_type') or None, comment.get('media_url') or None)
-                )
-                created = cur.fetchone()
-                conn.commit()
-            return jsonify(created), 201
-        finally:
-            pool.putconn(conn)
+            body, err = self._read_body()
+            if body is None:
+                body = {}
+            delete_password = str(body.get('password') or '') if isinstance(body, dict) else ''
+            if not get_env_value('ADMIN_DELETE_PASSWORD') or delete_password != get_env_value('ADMIN_DELETE_PASSWORD'):
+                self._send_json(401, {'error': 'Invalid admin password'})
+                return
+            id_ = str(body.get('id') or '')
+            if not id_:
+                self._send_json(400, {'error': 'Invalid comment id'})
+                return
+            self._send_json(405, {'error': 'Delete not supported for storage manager'})
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            self._send_json(500, {'error': 'Internal server error', 'detail': str(exc)})
 
-    return jsonify({'error': 'Not supported'}), 405
-
-
-def comments_sanity():
-    if request.method == 'GET':
-        return jsonify(get_comments_from_configured_backends()), 200
-
-    if request.method == 'POST':
-        if request.content_type and 'multipart/form-data' in request.content_type:
-            body = {
-                'name': request.form.get('name', ''),
-                'text': request.form.get('text', ''),
-                'media_type': request.form.get('media_type', ''),
-                'media_url': request.form.get('media_url', '')
-            }
-            uploaded = save_uploaded_media(request.files.get('media_file'))
-            if uploaded:
-                body['media_type'] = body.get('media_type') or uploaded['media_type']
-                body['media_url'] = uploaded['media_url'] or body.get('media_url')
-        else:
-            data = request.get_data(as_text=True) or '{}'
-            if len(data.encode('utf8')) > MAX_BODY_BYTES:
-                return jsonify({'error': 'Payload too large'}), 413
-            try:
-                body = json.loads(data)
-            except Exception:
-                return jsonify({'error': 'Invalid JSON'}), 400
-
-        comment = normalise_comment(body)
-        if not comment:
-            return jsonify({'error': 'Name and message are required'}), 400
-        try:
-            created = persist_comment_to_configured_backends(comment)
-            return jsonify(created), 201
-        except RuntimeError as exc:
-            return jsonify({'error': str(exc)}), 507
-
-    if request.method == 'DELETE':
-        try:
-            body = request.get_json(silent=True) or {}
-        except Exception:
-            body = {}
-        delete_password = str(body.get('password') or '') if isinstance(body, dict) else ''
-        if not get_env_value('ADMIN_DELETE_PASSWORD') or delete_password != get_env_value('ADMIN_DELETE_PASSWORD'):
-            return jsonify({'error': 'Invalid admin password'}), 401
-        id_ = str(body.get('id') or '')
-        if not id_:
-            return jsonify({'error': 'Invalid comment id'}), 400
-        return jsonify({'error': 'Delete not supported for storage manager'}), 405
-
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+    def log_message(self, format, *args):
+        # Suppress default logging
+        pass

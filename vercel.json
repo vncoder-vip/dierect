@@ -1,7 +1,0 @@
-{
-  "functions": {
-    "api/comments.py": {
-      "maxDuration": 30
-    }
-  }
-}

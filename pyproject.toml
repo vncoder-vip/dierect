@@ -1,15 +1,9 @@
 [project]
 name = "chuot-chat"
 version = "1.0.0"
-description = "Chuột Chat Flask app"
+description = "Chuột Chat - Vercel serverless API"
 requires-python = ">=3.11"
-dependencies = [
-    "flask==3.0.3",
-    "requests==2.31.0",
-]
-
-[project.optional-dependencies]
-postgres = ["psycopg2-binary==2.9.9"]
+dependencies = []
 
 [build-system]
 requires = ["setuptools>=61.0"]
