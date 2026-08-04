@@ -85,6 +85,14 @@
 
   <script>
     const COMMENT_MEDIA_CACHE_KEY = 'directchat-comment-media';
+    const LOCAL_MEDIA_DB_NAME = 'directchat-local-media';
+    const LOCAL_MEDIA_STORE_NAME = 'comments';
+    const localMediaUrls = new Set();
+    let localMediaDbPromise = null;
+
+    window.addEventListener('beforeunload', () => {
+      localMediaUrls.forEach((url) => URL.revokeObjectURL(url));
+    });
 
     function escapeHtml(value) {
       const element = document.createElement('div');
@@ -109,9 +117,20 @@
       return '';
     }
 
+    function extractMediaFromText(text) {
+      const urls = String(text || '').match(/https?:\/\/[^\s<>'"`]+/g) || [];
+      for (const rawUrl of urls) {
+        const mediaUrl = resolveMediaUrl(rawUrl.replace(/[),.!?]+$/g, ''));
+        const mediaType = inferMediaType(mediaUrl);
+        if (mediaType && mediaUrl) return { media_type: mediaType, media_url: mediaUrl };
+      }
+      return { media_type: '', media_url: '' };
+    }
+
     function getMediaInfo(item) {
       const mediaUrl = resolveMediaUrl(item?.media_url || item?.mediaUrl || '');
       const explicitType = String(item?.media_type || item?.mediaType || '').trim().toLowerCase();
+      if (!mediaUrl) return extractMediaFromText(item?.text);
       const mediaType = explicitType === 'image' || explicitType === 'video'
         ? explicitType
         : inferMediaType(mediaUrl);
@@ -126,16 +145,53 @@
       return name && text ? `content:${name}|${text}` : '';
     }
 
-    function mergeCachedMedia(item) {
+    function openLocalMediaDb() {
+      if (!('indexedDB' in window)) return Promise.resolve(null);
+      if (localMediaDbPromise) return localMediaDbPromise;
+      localMediaDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(LOCAL_MEDIA_DB_NAME, 1);
+        request.onupgradeneeded = () => {
+          if (!request.result.objectStoreNames.contains(LOCAL_MEDIA_STORE_NAME)) {
+            request.result.createObjectStore(LOCAL_MEDIA_STORE_NAME);
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      }).catch(() => null);
+      return localMediaDbPromise;
+    }
+
+    async function mergeLocalFileMedia(item) {
+      if (item.media_url) return item;
+      const key = getMediaCacheKey(item);
+      if (!key) return item;
+      const db = await openLocalMediaDb();
+      if (!db) return item;
+      const file = await new Promise((resolve) => {
+        const request = db.transaction(LOCAL_MEDIA_STORE_NAME, 'readonly')
+          .objectStore(LOCAL_MEDIA_STORE_NAME)
+          .get(key);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => resolve(null);
+      });
+      if (!file) return item;
+      const mediaUrl = URL.createObjectURL(file);
+      localMediaUrls.add(mediaUrl);
+      const mediaType = String(file.type || '').startsWith('video/') ? 'video' : 'image';
+      return { ...item, media_type: mediaType, media_url: mediaUrl };
+    }
+
+    async function mergeCachedMedia(item) {
       const media = getMediaInfo(item);
       if (media.media_url) return { ...item, ...media };
       try {
         const cache = JSON.parse(localStorage.getItem(COMMENT_MEDIA_CACHE_KEY) || '{}');
         const cached = cache && cache[getMediaCacheKey(item)];
-        return cached ? { ...item, ...getMediaInfo(cached) } : { ...item, ...media };
+        if (cached) return { ...item, ...getMediaInfo(cached) };
       } catch {
-        return { ...item, ...media };
+        // Continue with IndexedDB fallback.
       }
+      return mergeLocalFileMedia({ ...item, ...media });
     }
 
     async function loadFeed() {
@@ -147,7 +203,7 @@
           return;
         }
         const rawItems = await response.json();
-        const items = Array.isArray(rawItems) ? rawItems.map(mergeCachedMedia) : [];
+        const items = Array.isArray(rawItems) ? await Promise.all(rawItems.map(mergeCachedMedia)) : [];
         if (!Array.isArray(items) || !items.length) {
           feed.innerHTML = '<div class="empty-state">Chưa có bình luận nào.</div>';
           return;

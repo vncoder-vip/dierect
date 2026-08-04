@@ -7,6 +7,9 @@ const localCommentMediaUrls = new Set();
 
 const COMMENT_EDITOR_STORAGE_KEY = 'directchat-comment-samples';
 const COMMENT_MEDIA_CACHE_KEY = 'directchat-comment-media';
+const LOCAL_MEDIA_DB_NAME = 'directchat-local-media';
+const LOCAL_MEDIA_STORE_NAME = 'comments';
+let localMediaDbPromise = null;
 
 window.addEventListener('beforeunload', () => {
   localCommentMediaUrls.forEach((url) => URL.revokeObjectURL(url));
@@ -45,7 +48,7 @@ async function loadRemoteComments() {
     const comments = await response.json();
     if (!Array.isArray(comments)) return [];
 
-    return comments
+    const normalizedComments = comments
       .map((comment) => ({
         name: String(comment?.name || '').trim().slice(0, 24),
         text: String(comment?.text || '').trim().slice(0, 120),
@@ -55,8 +58,10 @@ async function loadRemoteComments() {
         storage_label: String(comment?.storage_label || (comment?.storage_id ? `Sanity #${comment.storage_id}` : '')).trim()
       }))
       .filter((comment) => comment.name && comment.text)
-      .map(mergeCachedCommentMedia)
-      .sort((newer, older) => {
+      .map(mergeCachedCommentMedia);
+
+    const commentsWithMedia = await Promise.all(normalizedComments.map(loadLocalCommentMedia));
+    return commentsWithMedia.sort((newer, older) => {
         const newerTime = Date.parse(newer.created_at);
         const olderTime = Date.parse(older.created_at);
         if (!Number.isFinite(newerTime) || !Number.isFinite(olderTime)) return 0;
@@ -86,9 +91,20 @@ function inferMediaTypeFromUrl(url) {
   return '';
 }
 
+function extractMediaFromText(text) {
+  const urls = String(text || '').match(/https?:\/\/[^\s<>'"`]+/g) || [];
+  for (const rawUrl of urls) {
+    const mediaUrl = sanitizeMediaPreview(rawUrl.replace(/[),.!?]+$/g, ''));
+    const mediaType = inferMediaTypeFromUrl(mediaUrl);
+    if (mediaType && mediaUrl) return { media_type: mediaType, media_url: mediaUrl };
+  }
+  return { media_type: '', media_url: '' };
+}
+
 function getCommentMedia(comment) {
   const mediaUrl = sanitizeMediaPreview(comment?.media_url || comment?.mediaUrl || '');
   const explicitType = String(comment?.media_type || comment?.mediaType || '').trim().toLowerCase();
+  if (!mediaUrl) return extractMediaFromText(comment?.text);
   const mediaType = explicitType === 'image' || explicitType === 'video'
     ? explicitType
     : inferMediaTypeFromUrl(mediaUrl);
@@ -133,6 +149,59 @@ function rememberCommentMedia(comment) {
   } catch {
     // Media cache is an enhancement; the comment itself remains usable.
   }
+}
+
+function openLocalMediaDb() {
+  if (!('indexedDB' in window)) return Promise.resolve(null);
+  if (localMediaDbPromise) return localMediaDbPromise;
+  localMediaDbPromise = new Promise((resolve, reject) => {
+    const request = indexedDB.open(LOCAL_MEDIA_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(LOCAL_MEDIA_STORE_NAME)) {
+        request.result.createObjectStore(LOCAL_MEDIA_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  }).catch(() => null);
+  return localMediaDbPromise;
+}
+
+async function saveLocalCommentMedia(comment, file) {
+  const key = getCommentMediaCacheKey(comment);
+  if (!key || !file) return;
+  const db = await openLocalMediaDb();
+  if (!db) return;
+  await new Promise((resolve) => {
+    const transaction = db.transaction(LOCAL_MEDIA_STORE_NAME, 'readwrite');
+    transaction.objectStore(LOCAL_MEDIA_STORE_NAME).put(file, key);
+    transaction.oncomplete = resolve;
+    transaction.onerror = resolve;
+    transaction.onabort = resolve;
+  });
+}
+
+async function loadLocalCommentMedia(comment) {
+  if (comment.media_url) return comment;
+  const key = getCommentMediaCacheKey(comment);
+  if (!key) return comment;
+  const db = await openLocalMediaDb();
+  if (!db) return comment;
+  const file = await new Promise((resolve) => {
+    const request = db.transaction(LOCAL_MEDIA_STORE_NAME, 'readonly')
+      .objectStore(LOCAL_MEDIA_STORE_NAME)
+      .get(key);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => resolve(null);
+  });
+  if (!file) return comment;
+  const mediaUrl = URL.createObjectURL(file);
+  localCommentMediaUrls.add(mediaUrl);
+  return {
+    ...comment,
+    media_type: inferMediaTypeFromFile(file),
+    media_url: mediaUrl
+  };
 }
 
 function revokeActivePreviewObjectUrl() {
@@ -1814,7 +1883,7 @@ let activeCommentBatchNumber = -1;
 let activeCommentNodes = [];
 let commentLifeTimer = 0;
 const COMMENT_BATCH_SIZE = 5;
-const COMMENT_DURATION = 30; // seconds per batch — slow elliptical drift
+const COMMENT_DURATION = 20; // seconds per batch — switch to the next group every 20s
 const BH_RADIUS = 11; // event horizon visual radius (~7.8 * 1.45)
 const ORBIT_START_RADIUS_A = BH_RADIUS + 22;
 const ORBIT_START_RADIUS_B = BH_RADIUS + 14;
@@ -1992,12 +2061,12 @@ function updateActiveComment(deltaTime) {
   if (!activeCommentNodes.length) return;
 
   commentLifeTimer += deltaTime;
-  const progress = Math.min(commentLifeTimer / COMMENT_DURATION, 1); // 0→1 over 30s
+  const progress = Math.min(commentLifeTimer / COMMENT_DURATION, 1); // 0→1 over 20s
 
   // First 25 seconds (progress 0→0.833): orbit normally at full radius
   // Last 5 seconds (progress 0.833→1): spiral into the black hole
-  const SPIRAL_START = 25 / 30; // ≈ 0.833
-  const FADE_START = 28 / 30; // ≈ 0.933
+  const SPIRAL_START = Math.max(0, (COMMENT_DURATION - 5) / COMMENT_DURATION);
+  const FADE_START = Math.max(0, (COMMENT_DURATION - 2) / COMMENT_DURATION);
   const spiralProgress = progress > SPIRAL_START
     ? (progress - SPIRAL_START) / (1 - SPIRAL_START)
     : 0;
@@ -2194,6 +2263,9 @@ async function handleCommentSubmit(event) {
       index: commentQueue.length
     };
     rememberCommentMedia(newComment);
+    if (selectedFile && fileMediaType) {
+      await saveLocalCommentMedia(newComment, selectedFile);
+    }
     // A just-submitted comment is the newest item and should appear first.
     initialComments.unshift(newComment);
     buildCommentQueue();
