@@ -103,6 +103,13 @@ html, body {
   color: #ffffff;
   box-shadow: 0 4px 14px rgba(236, 72, 153, 0.45);
   transition: transform 0.3s ease;
+  overflow: hidden;
+}
+
+.logo-icon svg {
+  width: 20px;
+  height: 20px;
+  display: block;
 }
 
 .logo-brand:hover .logo-icon {

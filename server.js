@@ -6,12 +6,8 @@ const { Pool } = require('pg');
 const PORT = Number(process.env.PORT || 10000);
 const ROOT = __dirname;
 const MAX_BODY_BYTES = 16 * 1024;
-const pool = process.env.DATABASE_URL
-  ? new Pool({
-      connectionString: process.env.DATABASE_URL,
-      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
-    })
-  : null;
+const DEFAULT_SANITY_API_VERSION = '2026-07-28';
+const DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT = 1000;
 
 const contentTypes = {
   '.css': 'text/css; charset=utf-8',
@@ -23,6 +19,209 @@ const contentTypes = {
   '.png': 'image/png',
   '.svg': 'image/svg+xml'
 };
+
+function parseEnvContent(content) {
+  const parsed = {};
+  for (const line of content.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex === -1) continue;
+    const key = trimmed.slice(0, separatorIndex).trim();
+    let value = trimmed.slice(separatorIndex + 1).trim();
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    parsed[key] = value;
+  }
+  return parsed;
+}
+
+function loadEnvFile(envFilePath = path.join(ROOT, '.env')) {
+  if (!fs.existsSync(envFilePath)) return {};
+  const parsed = parseEnvContent(fs.readFileSync(envFilePath, 'utf8'));
+  for (const [key, value] of Object.entries(parsed)) {
+    if (!process.env[key]) process.env[key] = value;
+  }
+  return parsed;
+}
+
+loadEnvFile();
+
+function getEnvValue(name, fallback = '') {
+  return process.env[name] ?? fallback;
+}
+
+function getEnvNumber(name, fallback) {
+  const parsed = Number(getEnvValue(name, fallback));
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    })
+  : null;
+
+function getConfiguredSanityStorages(env = process.env) {
+  const storages = [];
+  const primary = {
+    id: 'primary',
+    projectId: getEnvValue('SANITY_PROJECT_ID', ''),
+    dataset: getEnvValue('SANITY_DATASET', 'production'),
+    token: getEnvValue('SANITY_API_TOKEN', ''),
+    apiVersion: getEnvValue('SANITY_API_VERSION', DEFAULT_SANITY_API_VERSION)
+  };
+  if (primary.projectId && primary.token) {
+    storages.push(primary);
+  }
+
+  for (let index = 1; index <= 14; index += 1) {
+    const projectId = env[`SANITY_PROJECT_ID${index}`] || '';
+    const token = env[`SANITY_API_TOKEN${index}`] || '';
+    if (!projectId || !token) continue;
+    storages.push({
+      id: String(index),
+      projectId,
+      dataset: env[`SANITY_DATASET${index}`] || getEnvValue('SANITY_DATASET', 'production'),
+      token,
+      apiVersion: getEnvValue('SANITY_API_VERSION', DEFAULT_SANITY_API_VERSION)
+    });
+  }
+
+  return storages;
+}
+
+function getMaxCommentsPerStorage() {
+  return Math.max(1, getEnvNumber('SANITY_MAX_COMMENTS_PER_PROJECT', DEFAULT_SANITY_MAX_COMMENTS_PER_PROJECT));
+}
+
+function buildSanityUrl(storage, endpoint) {
+  return `https://${storage.projectId}.api.sanity.io/v${storage.apiVersion}${endpoint}`;
+}
+
+async function sanityRequest(storage, endpoint, options = {}) {
+  const url = buildSanityUrl(storage, endpoint);
+  const headers = {
+    Authorization: `Bearer ${storage.token}`,
+    'Content-Type': 'application/json'
+  };
+  const init = {
+    method: options.method || 'GET',
+    headers
+  };
+  if (options.body !== undefined) {
+    init.body = JSON.stringify(options.body);
+  }
+
+  const response = await fetch(url, init);
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = text;
+    }
+  }
+
+  if (!response.ok) {
+    const error = new Error(`Sanity request failed with status ${response.status}`);
+    error.statusCode = response.status;
+    error.details = payload;
+    throw error;
+  }
+
+  return payload;
+}
+
+async function getCommentCount(storage) {
+  const query = 'count(*[_type == "comment"])';
+  const encodedQuery = encodeURIComponent(query);
+  const payload = await sanityRequest(storage, `/data/query/${encodeURIComponent(storage.dataset)}?query=${encodedQuery}`);
+  return Number(payload?.result ?? 0);
+}
+
+async function getCommentsFromStorage(storage) {
+  const query = '*[_type == "comment"] | order(createdAt asc)[0...100]{_id, name, text, createdAt}';
+  const payload = await sanityRequest(storage, `/data/query/${encodeURIComponent(storage.dataset)}?query=${encodeURIComponent(query)}`);
+  const comments = Array.isArray(payload?.result) ? payload.result : [];
+  return comments.map((comment) => ({
+    id: comment._id,
+    name: comment.name,
+    text: comment.text,
+    created_at: comment.createdAt,
+    storage_id: storage.id
+  }));
+}
+
+async function createCommentInStorage(storage, comment) {
+  const payload = {
+    mutations: [{
+      create: {
+        _type: 'comment',
+        name: comment.name,
+        text: comment.text,
+        createdAt: new Date().toISOString()
+      }
+    }]
+  };
+  const result = await sanityRequest(storage, `/data/mutate/${encodeURIComponent(storage.dataset)}?returnIds=true`, {
+    method: 'POST',
+    body: payload
+  });
+  const ids = Array.isArray(result?.result) ? result.result : [];
+  return {
+    id: ids[0]?._id || null,
+    name: comment.name,
+    text: comment.text,
+    created_at: new Date().toISOString()
+  };
+}
+
+async function persistCommentWithStorageManager(comment) {
+  const storages = getConfiguredSanityStorages();
+  if (!storages.length) {
+    const error = new Error('No Sanity storage configured');
+    error.statusCode = 503;
+    throw error;
+  }
+
+  const maxComments = getMaxCommentsPerStorage();
+  for (const storage of storages) {
+    try {
+      const count = await getCommentCount(storage);
+      if (count >= maxComments) {
+        continue;
+      }
+      return await createCommentInStorage(storage, comment);
+    } catch (error) {
+      console.warn(`Skipping Sanity storage ${storage.id}:`, error.message);
+    }
+  }
+
+  const error = new Error('All configured Sanity storages are full or unavailable');
+  error.statusCode = 507;
+  throw error;
+}
+
+async function listCommentsFromStorageManager() {
+  const storages = getConfiguredSanityStorages();
+  const allComments = [];
+  for (const storage of storages) {
+    try {
+      const comments = await getCommentsFromStorage(storage);
+      allComments.push(...comments);
+    } catch (error) {
+      console.warn(`Unable to read from Sanity storage ${storage.id}:`, error.message);
+    }
+  }
+
+  return allComments
+    .sort((first, second) => new Date(second.created_at || 0) - new Date(first.created_at || 0))
+    .slice(0, 100);
+}
 
 async function ensureSchema() {
   if (!pool) return;
@@ -75,23 +274,47 @@ function normaliseComment(input) {
 }
 
 async function handleComments(request, response) {
-  if (!pool) return sendJson(response, 503, { error: 'Database is not configured' });
+  if (pool) {
+    if (request.method === 'GET') {
+      const result = await pool.query(
+        'SELECT id, name, text, created_at FROM comments ORDER BY created_at DESC LIMIT 100'
+      );
+      return sendJson(response, 200, result.rows.reverse());
+    }
+
+    if (request.method === 'POST') {
+      const comment = normaliseComment(await readJson(request));
+      if (!comment) return sendJson(response, 400, { error: 'Name and message are required' });
+      const result = await pool.query(
+        'INSERT INTO comments (name, text) VALUES ($1, $2) RETURNING id, name, text, created_at',
+        [comment.name, comment.text]
+      );
+      return sendJson(response, 201, result.rows[0]);
+    }
+
+    response.setHeader('Allow', 'GET, POST');
+    return sendJson(response, 405, { error: 'Method not allowed' });
+  }
+
+  const storages = getConfiguredSanityStorages();
+  if (!storages.length) {
+    return sendJson(response, 503, { error: 'No storage backend configured' });
+  }
 
   if (request.method === 'GET') {
-    const result = await pool.query(
-      'SELECT id, name, text, created_at FROM comments ORDER BY created_at DESC LIMIT 100'
-    );
-    return sendJson(response, 200, result.rows.reverse());
+    const comments = await listCommentsFromStorageManager();
+    return sendJson(response, 200, comments);
   }
 
   if (request.method === 'POST') {
     const comment = normaliseComment(await readJson(request));
     if (!comment) return sendJson(response, 400, { error: 'Name and message are required' });
-    const result = await pool.query(
-      'INSERT INTO comments (name, text) VALUES ($1, $2) RETURNING id, name, text, created_at',
-      [comment.name, comment.text]
-    );
-    return sendJson(response, 201, result.rows[0]);
+    try {
+      const created = await persistCommentWithStorageManager(comment);
+      return sendJson(response, 201, created);
+    } catch (error) {
+      return sendJson(response, error.statusCode || 500, { error: error.message });
+    }
   }
 
   response.setHeader('Allow', 'GET, POST');
@@ -123,25 +346,45 @@ function serveStatic(request, response, pathname) {
   });
 }
 
-const server = http.createServer(async (request, response) => {
-  try {
-    const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
-    if (url.pathname === '/api/comments') {
-      return await handleComments(request, response);
+function createServer() {
+  return http.createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
+      if (url.pathname === '/api/comments') {
+        return await handleComments(request, response);
+      }
+      if (request.method !== 'GET' && request.method !== 'HEAD') {
+        return sendJson(response, 405, { error: 'Method not allowed' });
+      }
+      return serveStatic(request, response, url.pathname);
+    } catch (error) {
+      console.error(error);
+      return sendJson(response, error.statusCode || 500, { error: 'Request failed' });
     }
-    if (request.method !== 'GET' && request.method !== 'HEAD') {
-      return sendJson(response, 405, { error: 'Method not allowed' });
-    }
-    return serveStatic(request, response, url.pathname);
-  } catch (error) {
-    console.error(error);
-    return sendJson(response, error.statusCode || 500, { error: 'Request failed' });
-  }
-});
-
-ensureSchema()
-  .then(() => server.listen(PORT, () => console.log(`Chuột Chat listening on port ${PORT}`)))
-  .catch((error) => {
-    console.error('Database initialisation failed:', error);
-    process.exit(1);
   });
+}
+
+function startServer() {
+  const server = createServer();
+  ensureSchema()
+    .then(() => server.listen(PORT, () => console.log(`Chuột Chat listening on port ${PORT}`)))
+    .catch((error) => {
+      console.error('Database initialisation failed:', error);
+      process.exit(1);
+    });
+}
+
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  createServer,
+  getConfiguredSanityStorages,
+  getMaxCommentsPerStorage,
+  loadEnvFile,
+  parseEnvContent,
+  normaliseComment,
+  persistCommentWithStorageManager,
+  listCommentsFromStorageManager
+};
