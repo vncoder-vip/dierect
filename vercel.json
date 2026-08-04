@@ -1,12 +1,7 @@
 {
-  "builds": [
-    {
-      "src": "api/comments.py",
-      "use": "@vercel/python"
+  "functions": {
+    "api/comments.py": {
+      "maxDuration": 30
     }
-  ],
-  "routes": [
-    { "src": "/api/comments", "dest": "api/comments.py" },
-    { "src": "/api/comments/(.*)", "dest": "api/comments.py" }
-  ]
+  }
 }
