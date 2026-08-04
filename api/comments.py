@@ -3,7 +3,6 @@ import json
 import datetime
 import urllib.parse as urlparse
 import urllib.request
-from http.server import BaseHTTPRequestHandler
 
 # ---- Configuration ----
 MAX_BODY_BYTES = 16 * 1024
@@ -177,92 +176,96 @@ def persist_comment_to_configured_backends(comment):
     raise RuntimeError('No backend configured')
 
 
-# ---- Vercel Serverless Function (native Python, no Flask) ----
-class handler(BaseHTTPRequestHandler):
-    def _send_json(self, status, data):
-        body = json.dumps(data, default=str).encode('utf-8')
-        self.send_response(status)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Content-Length', str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+# ---- Vercel Serverless Function ----
+# Vercel Python runtime expects a `handler` function that takes (request, response)
+# or a WSGI app. We use the simple handler function format.
+def handler(request):
+    """Vercel Python serverless function entry point."""
+    try:
+        method = request.get('method', 'GET').upper()
+        headers = request.get('headers', {})
+        body_str = request.get('body', '')
 
-    def _read_body(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        if content_length > MAX_BODY_BYTES:
-            return None, 'too_large'
-        if content_length == 0:
-            return {}, None
-        raw = self.rfile.read(content_length)
-        content_type = self.headers.get('Content-Type', '')
-        if 'application/json' in content_type:
+        # Parse body
+        body = {}
+        if body_str:
             try:
-                return json.loads(raw.decode('utf-8')), None
+                body = json.loads(body_str)
             except (ValueError, json.JSONDecodeError):
-                return None, 'invalid_json'
-        # Fallback: try JSON anyway
-        try:
-            return json.loads(raw.decode('utf-8')), None
-        except (ValueError, json.JSONDecodeError):
-            return None, 'invalid_json'
+                return {
+                    'statusCode': 400,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Invalid JSON'})
+                }
 
-    def do_GET(self):
-        try:
+        if method == 'GET':
             comments = get_comments_from_configured_backends()
-            self._send_json(200, comments)
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            self._send_json(500, {'error': 'Internal server error', 'detail': str(exc)})
+            return {
+                'statusCode': 200,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps(comments, default=str)
+            }
 
-    def do_POST(self):
-        try:
-            body, err = self._read_body()
-            if err == 'too_large':
-                self._send_json(413, {'error': 'Payload too large'})
-                return
-            if err == 'invalid_json':
-                self._send_json(400, {'error': 'Invalid JSON'})
-                return
-            if body is None:
-                self._send_json(400, {'error': 'Invalid JSON'})
-                return
+        if method == 'POST':
             comment = normalise_comment(body)
             if not comment:
-                self._send_json(400, {'error': 'Name and message are required'})
-                return
+                return {
+                    'statusCode': 400,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Name and message are required'})
+                }
             if not get_configured_sanity_storages():
-                self._send_json(503, {'error': 'No backend configured'})
-                return
+                return {
+                    'statusCode': 503,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'No backend configured'})
+                }
             try:
                 created = persist_comment_to_configured_backends(comment)
-                self._send_json(201, created)
+                return {
+                    'statusCode': 201,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps(created, default=str)
+                }
             except RuntimeError as exc:
-                self._send_json(507, {'error': str(exc)})
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            self._send_json(500, {'error': 'Internal server error', 'detail': str(exc)})
+                return {
+                    'statusCode': 507,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': str(exc)})
+                }
 
-    def do_DELETE(self):
-        try:
-            body, err = self._read_body()
-            if body is None:
-                body = {}
+        if method == 'DELETE':
             delete_password = str(body.get('password') or '') if isinstance(body, dict) else ''
             if not get_env_value('ADMIN_DELETE_PASSWORD') or delete_password != get_env_value('ADMIN_DELETE_PASSWORD'):
-                self._send_json(401, {'error': 'Invalid admin password'})
-                return
+                return {
+                    'statusCode': 401,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Invalid admin password'})
+                }
             id_ = str(body.get('id') or '')
             if not id_:
-                self._send_json(400, {'error': 'Invalid comment id'})
-                return
-            self._send_json(405, {'error': 'Delete not supported for storage manager'})
-        except Exception as exc:
-            import traceback
-            traceback.print_exc()
-            self._send_json(500, {'error': 'Internal server error', 'detail': str(exc)})
+                return {
+                    'statusCode': 400,
+                    'headers': {'Content-Type': 'application/json'},
+                    'body': json.dumps({'error': 'Invalid comment id'})
+                }
+            return {
+                'statusCode': 405,
+                'headers': {'Content-Type': 'application/json'},
+                'body': json.dumps({'error': 'Delete not supported for storage manager'})
+            }
 
-    def log_message(self, format, *args):
-        # Suppress default logging
-        pass
+        return {
+            'statusCode': 405,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({'error': 'Method not allowed'})
+        }
+
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        return {
+            'statusCode': 500,
+            'headers': {'Content-Type': 'application/json'},
+            'body': json.dumps({'error': 'Internal server error', 'detail': str(exc)})
+        }
