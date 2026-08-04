@@ -1413,7 +1413,7 @@ async function initThree() {
   createSolarSystem();
   buildCommentQueue();
   const commentStartTimer = setTimeout(() => {
-    if (!activeCommentNode) startNextComment();
+    if (!activeCommentNodes.length) startNextCommentBatch();
   }, 1000);
 
   // Do not hold WebGL setup, controls, or the first render hostage to a
@@ -1424,9 +1424,8 @@ async function initThree() {
     // before local fallback comments in the black-hole display queue.
     initialComments.unshift(...remoteComments.slice(0, 12));
     buildCommentQueue();
-    activeCommentIndex = -1;
     clearTimeout(commentStartTimer);
-    startNextComment();
+    showNewestCommentBatch();
   });
 
   currentRotationX = 0.52;
@@ -1447,6 +1446,7 @@ function setupTargetFinder() {
   const targetSelect = document.getElementById('celestial-target');
   const focusButton = document.getElementById('focus-target');
   const freeOrbitButton = document.getElementById('free-orbit');
+  const nextCommentBatchButton = document.getElementById('next-comment-batch');
   const toggleButton = document.getElementById('toggle-telescope');
   const targetFinder = document.querySelector('.target-finder');
 
@@ -1492,6 +1492,10 @@ function setupTargetFinder() {
     stopCelestialAudio();
     returnToFreeOrbit();
   });
+
+  if (nextCommentBatchButton) {
+    nextCommentBatchButton.addEventListener('click', startNextCommentBatch);
+  }
 }
 
 function showFocusHint(objectName) {
@@ -1741,10 +1745,11 @@ function setup360OrbitControls() {
 // ─── Comment Queue System ────────────────────────────────────────────────────
 // Shows one comment at a time: appears at outer orbit, spirals into black hole, disappears
 let commentQueue = [];
-let activeCommentIndex = -1;
-let activeCommentNode = null;
+let activeCommentBatchNumber = -1;
+let activeCommentNodes = [];
 let commentLifeTimer = 0;
-const COMMENT_DURATION = 30; // seconds per comment — slow elliptical drift
+const COMMENT_BATCH_SIZE = 5;
+const COMMENT_DURATION = 30; // seconds per batch — slow elliptical drift
 const BH_RADIUS = 11; // event horizon visual radius (~7.8 * 1.45)
 const ORBIT_START_RADIUS_A = BH_RADIUS + 22;
 const ORBIT_START_RADIUS_B = BH_RADIUS + 14;
@@ -1753,19 +1758,17 @@ function buildCommentQueue() {
   commentQueue = initialComments.map((c, i) => ({ ...c, index: i }));
 }
 
-function startNextComment() {
-  if (commentQueue.length === 0) return;
+function removeActiveCommentSprites() {
+  activeCommentNodes.forEach((node) => {
+    if (!node?.sprite) return;
+    scene.remove(node.sprite);
+    if (node.sprite.material?.map) node.sprite.material.map.dispose();
+    node.sprite.material.dispose();
+  });
+  activeCommentNodes = [];
+}
 
-  // Remove previous sprite
-  if (activeCommentNode && activeCommentNode.sprite) {
-    scene.remove(activeCommentNode.sprite);
-    activeCommentNode.sprite.material.map.dispose();
-    activeCommentNode.sprite.material.dispose();
-  }
-
-  activeCommentIndex = (activeCommentIndex + 1) % commentQueue.length;
-  const entry = commentQueue[activeCommentIndex];
-
+function createCommentSprite(entry, slot, visibleCount) {
   // Floating bubbles should show only the comment itself; storage metadata
   // remains available in the editor/media views.
   const canvas = createMessengerBubbleCanvas(entry.name, entry.text);
@@ -1780,9 +1783,12 @@ function startNextComment() {
 
   const sprite = new THREE.Sprite(material);
   const canvasAspect = canvas.width / canvas.height;
-  sprite.scale.set(canvasAspect * 3.2 * 1.35, 3.2 * 1.35, 1);
+  const bubbleScale = visibleCount > 1 ? 2.75 : 3.2 * 1.35;
+  const baseScaleX = canvasAspect * bubbleScale;
+  const baseScaleY = bubbleScale;
+  sprite.scale.set(baseScaleX, baseScaleY, 1);
 
-  const startAngle = Math.random() * Math.PI * 2;
+  const startAngle = (slot / visibleCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.18;
   sprite.position.set(
     Math.cos(startAngle) * ORBIT_START_RADIUS_A,
     Math.sin(startAngle) * 3,
@@ -1791,16 +1797,54 @@ function startNextComment() {
 
   scene.add(sprite);
 
-  activeCommentNode = {
+  activeCommentNodes.push({
     sprite,
     angle: startAngle,
+    baseScaleX,
+    baseScaleY,
     startRadiusA: ORBIT_START_RADIUS_A,
     startRadiusB: ORBIT_START_RADIUS_B,
     orbitTilt: (Math.random() - 0.5) * 0.6
-  };
+  });
+}
+
+function updateCommentBatchStatus() {
+  const statusElem = document.getElementById('comment-batch-status');
+  if (!statusElem) return;
+  if (!commentQueue.length || activeCommentBatchNumber < 0) {
+    statusElem.textContent = 'Chưa có bình luận';
+    return;
+  }
+  const totalBatches = Math.ceil(commentQueue.length / COMMENT_BATCH_SIZE);
+  statusElem.textContent = `Nhóm ${activeCommentBatchNumber + 1}/${totalBatches}`;
+}
+
+function startNextCommentBatch() {
+  if (commentQueue.length === 0) {
+    updateCommentBatchStatus();
+    return;
+  }
+
+  removeActiveCommentSprites();
+
+  const totalBatches = Math.max(1, Math.ceil(commentQueue.length / COMMENT_BATCH_SIZE));
+  activeCommentBatchNumber = (activeCommentBatchNumber + 1) % totalBatches;
+  const batchStart = activeCommentBatchNumber * COMMENT_BATCH_SIZE;
+  const visibleCount = Math.min(COMMENT_BATCH_SIZE, commentQueue.length);
+
+  for (let slot = 0; slot < visibleCount; slot += 1) {
+    const entry = commentQueue[(batchStart + slot) % commentQueue.length];
+    createCommentSprite(entry, slot, visibleCount);
+  }
 
   commentLifeTimer = 0;
   updateCommentCountDisplay();
+  updateCommentBatchStatus();
+}
+
+function showNewestCommentBatch() {
+  activeCommentBatchNumber = -1;
+  startNextCommentBatch();
 }
 
 function updateCommentCountDisplay() {
@@ -1812,7 +1856,7 @@ function updateCommentCountDisplay() {
 }
 
 function updateActiveComment(deltaTime) {
-  if (!activeCommentNode) return;
+  if (!activeCommentNodes.length) return;
 
   commentLifeTimer += deltaTime;
   const progress = Math.min(commentLifeTimer / COMMENT_DURATION, 1); // 0→1 over 30s
@@ -1820,50 +1864,33 @@ function updateActiveComment(deltaTime) {
   // First 25 seconds (progress 0→0.833): orbit normally at full radius
   // Last 5 seconds (progress 0.833→1): spiral into the black hole
   const SPIRAL_START = 25 / 30; // ≈ 0.833
-  let currentRadiusA, currentRadiusB, angle;
-
-  if (progress < SPIRAL_START) {
-    // Orbiting — stay at start radius, circle around
-    currentRadiusA = activeCommentNode.startRadiusA;
-    currentRadiusB = activeCommentNode.startRadiusB;
-    angle = activeCommentNode.angle + progress * Math.PI * 1.8; // slow orbit
-  } else {
-    // Last 5 seconds — spiral in toward the black hole
-    const spiralProgress = (progress - SPIRAL_START) / (1 - SPIRAL_START); // 0→1 over last 5s
-    currentRadiusA = activeCommentNode.startRadiusA * (1 - spiralProgress);
-    currentRadiusB = activeCommentNode.startRadiusB * (1 - spiralProgress);
-    angle = activeCommentNode.angle + progress * Math.PI * 1.8 + spiralProgress * Math.PI * 3;
-  }
-
-  const x = Math.cos(angle) * currentRadiusA;
-  const z = Math.sin(angle) * currentRadiusB;
-  const y = Math.sin(angle * 2) * (2 + activeCommentNode.orbitTilt * 4) * (1 - progress * 0.5);
-
-  activeCommentNode.sprite.position.x = x;
-  activeCommentNode.sprite.position.y = y;
-  activeCommentNode.sprite.position.z = z;
-
-  // Full scale during orbit, shrink only in last 5 seconds
-  let scaleFactor = 1;
-  if (progress > SPIRAL_START) {
-    const spiralProgress = (progress - SPIRAL_START) / (1 - SPIRAL_START);
-    scaleFactor = 1 - spiralProgress * 0.7;
-  }
-  const baseW = activeCommentNode.sprite.scale.x;
-  const baseH = activeCommentNode.sprite.scale.y;
-  activeCommentNode.sprite.scale.set(baseW * scaleFactor, baseH * scaleFactor, 1);
-
-  // Fade out only in the last 2 seconds
   const FADE_START = 28 / 30; // ≈ 0.933
-  if (progress > FADE_START) {
-    const fadeOut = 1 - (progress - FADE_START) / (1 - FADE_START);
-    activeCommentNode.sprite.material.opacity = Math.max(0, fadeOut);
-  } else {
-    activeCommentNode.sprite.material.opacity = 1;
-  }
+  const spiralProgress = progress > SPIRAL_START
+    ? (progress - SPIRAL_START) / (1 - SPIRAL_START)
+    : 0;
+
+  activeCommentNodes.forEach((node) => {
+    const currentRadiusA = node.startRadiusA * (1 - spiralProgress);
+    const currentRadiusB = node.startRadiusB * (1 - spiralProgress);
+    const angle = node.angle + progress * Math.PI * 1.8 + spiralProgress * Math.PI * 3;
+
+    node.sprite.position.x = Math.cos(angle) * currentRadiusA;
+    node.sprite.position.y = Math.sin(angle * 2) * (2 + node.orbitTilt * 4) * (1 - progress * 0.5);
+    node.sprite.position.z = Math.sin(angle) * currentRadiusB;
+
+    const scaleFactor = progress > SPIRAL_START ? 1 - spiralProgress * 0.7 : 1;
+    node.sprite.scale.set(node.baseScaleX * scaleFactor, node.baseScaleY * scaleFactor, 1);
+
+    if (progress > FADE_START) {
+      const fadeOut = 1 - (progress - FADE_START) / (1 - FADE_START);
+      node.sprite.material.opacity = Math.max(0, fadeOut);
+    } else {
+      node.sprite.material.opacity = 1;
+    }
+  });
 
   if (progress >= 1) {
-    startNextComment();
+    startNextCommentBatch();
   }
 }
 
@@ -2023,9 +2050,9 @@ async function handleCommentSubmit(event) {
     // A just-submitted comment is the newest item and should appear first.
     initialComments.unshift(newComment);
     buildCommentQueue();
-    activeCommentIndex = -1;
+    activeCommentBatchNumber = -1;
     if (typeof scene !== 'undefined' && scene && typeof THREE !== 'undefined') {
-      startNextComment();
+      startNextCommentBatch();
     }
     nameInput.value = '';
     msgInput.value = '';

@@ -371,6 +371,68 @@ main {
   background: rgba(148, 163, 184, 0.17);
 }
 
+.comment-batch-control {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.14);
+}
+
+.comment-batch-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.comment-batch-label,
+#comment-batch-status {
+  color: #cbd5e1;
+  font-size: 0.72rem;
+}
+
+.comment-batch-label {
+  font-weight: 700;
+}
+
+#comment-batch-status {
+  color: #93c5fd;
+  white-space: nowrap;
+}
+
+.btn-next-comment-batch {
+  display: inline-flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 12px;
+  color: #e0e7ff;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.35), rgba(139, 92, 246, 0.35));
+  border: 1px solid rgba(129, 140, 248, 0.32);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s ease, filter 0.2s ease, background 0.2s ease;
+}
+
+.btn-next-comment-batch:hover {
+  filter: brightness(1.16);
+  transform: translateY(-1px);
+}
+
+.btn-next-comment-batch:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.btn-next-comment-batch svg {
+  width: 15px;
+  height: 15px;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
